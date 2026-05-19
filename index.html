@@ -390,6 +390,35 @@ function drawCurvedStretch(ctx, sliced, path, scale = 1) {
     ctx.restore();
   }
 
+  // 接缝补丁（round-join）：每个内部 path 点画一片平分角方向的中行
+  // 高度 = max(2, |Δθ| * Wd / 2)，外侧缝隙正好被这片填掉
+  for (let i = 1; i < path.length - 1; i++) {
+    const prev = path[i - 1], cur = path[i], next = path[i + 1];
+    const tanIn = Math.atan2(cur.y - prev.y, cur.x - prev.x);
+    const tanOut = Math.atan2(next.y - cur.y, next.x - cur.x);
+
+    // 平分角 = 两个方向向量的和的方向（自动处理 ±π 边界）
+    const bx = Math.cos(tanIn) + Math.cos(tanOut);
+    const by = Math.sin(tanIn) + Math.sin(tanOut);
+    if (Math.hypot(bx, by) < 0.01) continue; // 反向 180° 时跳过
+    const bisectAng = Math.atan2(by, bx);
+
+    // 夹角差（-π ~ π）
+    let dAng = tanOut - tanIn;
+    while (dAng > Math.PI) dAng -= 2 * Math.PI;
+    while (dAng < -Math.PI) dAng += 2 * Math.PI;
+
+    if (Math.abs(dAng) < 0.03) continue; // 近直线段跳过，省 drawImage
+
+    // 缝隙公式：(Wd/2) * tan(|Δθ|/2)，stamp 取其 2 倍保险
+    const stampH = Math.max(2, Wd * Math.tan(Math.abs(dAng) / 2));
+    ctx.save();
+    ctx.translate(cur.x, cur.y);
+    ctx.rotate(bisectAng + Math.PI / 2);
+    ctx.drawImage(sliced.canvas, 0, cutY, W, 1, -Wd / 2, -stampH / 2, Wd, stampH);
+    ctx.restore();
+  }
+
   // 终点：画上半截，沿末段切线对齐
   const n = path.length;
   const pm = path[n - 2], pn = path[n - 1];
@@ -455,7 +484,7 @@ mainCanvas.addEventListener('mousemove', (e) => {
   if (state.currentStroke.curved) {
     const last = state.currentStroke.path[state.currentStroke.path.length - 1];
     const d = Math.hypot(p.x - last.x, p.y - last.y);
-    if (d > 2.5) state.currentStroke.path.push(p);
+    if (d > 1.5) state.currentStroke.path.push(p);
   } else {
     state.currentStroke.path = [state.currentStroke.path[0], p];
   }
