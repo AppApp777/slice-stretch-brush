@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>切片拉伸笔刷 · Slice-Stretch Brush</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f5f5; padding: 16px; color: #222; }
+#app { display: flex; gap: 16px; max-width: 1500px; margin: 0 auto; }
+#sidebar { width: 300px; background: white; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); flex-shrink: 0; }
+#main { flex: 1; background: white; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+h1 { font-size: 18px; margin-bottom: 12px; }
+.section { margin-bottom: 18px; }
+.section-title { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 8px; letter-spacing: 0.5px; }
+button { display: block; width: 100%; padding: 8px 12px; margin: 4px 0; border: 1px solid #ccc; background: white; cursor: pointer; border-radius: 4px; font-size: 13px; transition: all 0.15s; }
+button:hover { background: #f0f0f0; border-color: #999; }
+button:active { background: #e0e0e0; }
+button.primary { background: #4a90e2; color: white; border-color: #4a90e2; }
+button.primary:hover { background: #357abd; }
+button.ghost { background: transparent; }
+.hint { font-size: 11px; color: #888; margin: 6px 0; line-height: 1.6; }
+#sourceCanvas { display: block; width: 100%; height: auto; cursor: crosshair; border: 1px dashed #ccc; background: #fff; margin-top: 4px; }
+#mainCanvas { display: block; width: 100%; cursor: crosshair; border: 1px solid #ddd; background: #fff; }
+#fileInput { display: none; }
+.status { padding: 6px 10px; border-radius: 4px; font-size: 12px; margin: 6px 0; line-height: 1.4; }
+.status.warn { background: #fff3cd; border: 1px solid #ffd966; color: #663; }
+.status.ok { background: #d4edda; border: 1px solid #4caf50; color: #2a4d2a; }
+.status.info { background: #cfe2ff; border: 1px solid #4a90e2; color: #1c4a80; }
+.kbd { display: inline-block; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; font-family: monospace; font-size: 11px; }
+.row { display: flex; gap: 6px; }
+.row > button { margin: 4px 0; }
+.mode-toggle { display: flex; gap: 4px; }
+.mode-toggle button { font-size: 12px; padding: 6px 8px; }
+.mode-toggle button.active { background: #4a90e2; color: white; border-color: #4a90e2; }
+#sliceInfo { font-size: 11px; color: #666; padding: 4px 0; font-family: monospace; }
+.slider-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.slider-row input[type=range] { flex: 1; }
+.slider-row .val { font-family: monospace; font-size: 12px; color: #555; min-width: 38px; text-align: right; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="sidebar">
+    <h1>切片拉伸笔刷</h1>
+
+    <div class="section">
+      <div class="section-title">1 · 加载图片</div>
+      <button id="btnLoad" class="primary">选择 PNG / JPG</button>
+      <button id="btnSample" class="ghost">用示例苹果</button>
+      <input type="file" id="fileInput" accept="image/*">
+      <div class="hint">推荐透明底 PNG。示例苹果可立即试玩。</div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">2 · 定义切割线</div>
+      <button id="btnCut">在原图上点两点 ↘</button>
+      <canvas id="sourceCanvas" width="260" height="260"></canvas>
+      <div id="cutStatus" class="status warn">尚未加载图片</div>
+      <div id="sliceInfo"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">3 · 拉伸模式（按 <span class="kbd">Shift</span> 切换）</div>
+      <div class="mode-toggle">
+        <button id="modeStraight" class="active">直线拉伸</button>
+        <button id="modeCurved">曲线（沿轨迹）</button>
+      </div>
+      <div class="hint">
+        直线：上半截随光标平移，中段被拉成胶囊。<br>
+        曲线：中段沿鼠标轨迹弯曲，可像笔刷一样写字。
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">4 · 笔触粗细（<span class="kbd">[</span> / <span class="kbd">]</span>）</div>
+      <div class="slider-row">
+        <input type="range" id="brushSize" min="5" max="300" value="100" step="1">
+        <span class="val" id="brushSizeVal">100%</span>
+      </div>
+      <div class="hint">每一笔记录画时的粗细。改滑杆后再画就是新粗细。</div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">操作</div>
+      <button id="btnUndo">撤销最后一笔 <span class="kbd">Ctrl+Z</span></button>
+      <button id="btnClear">清空画布</button>
+      <button id="btnExport" class="primary">导出 PNG</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <canvas id="mainCanvas" width="1080" height="720"></canvas>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+
+// ============================================================
+// 状态
+// ============================================================
+const state = {
+  srcImage: null,           // HTMLImageElement / HTMLCanvasElement
+  sliced: null,             // { canvas, cutY, width, height, topExtent, bottomExtent, cutMidpoint, cutAngle }
+  uiMode: 'idle',           // 'idle' | 'defineCut' | 'draw'
+  cutPoints: [],            // 在原图坐标中的两个点
+  currentStroke: null,      // 正在画的一笔
+  strokes: [],              // 已落定的笔画
+  curvedMode: false,        // false=直线 true=曲线
+  brushScale: 1.0,          // 笔触缩放（1.0 = 100%）
+};
+
+// ============================================================
+// DOM
+// ============================================================
+const $ = (id) => document.getElementById(id);
+const sourceCanvas = $('sourceCanvas');
+const sourceCtx = sourceCanvas.getContext('2d');
+const mainCanvas = $('mainCanvas');
+const mainCtx = mainCanvas.getContext('2d');
+const fileInput = $('fileInput');
+const cutStatus = $('cutStatus');
+const sliceInfo = $('sliceInfo');
+const modeStraightBtn = $('modeStraight');
+const modeCurvedBtn = $('modeCurved');
+
+// 缓存已落定笔画的画布——避免每帧重画全部
+const committedCanvas = document.createElement('canvas');
+committedCanvas.width = mainCanvas.width;
+committedCanvas.height = mainCanvas.height;
+const committedCtx = committedCanvas.getContext('2d');
+
+// ============================================================
+// 棋盘格（透明背景视觉提示）
+// ============================================================
+function drawCheckerboard(ctx, w, h, size = 12) {
+  for (let y = 0; y < h; y += size) {
+    for (let x = 0; x < w; x += size) {
+      ctx.fillStyle = ((x / size + y / size) | 0) % 2 === 0 ? '#fafafa' : '#eeeeee';
+      ctx.fillRect(x, y, size, size);
+    }
+  }
+}
+
+// ============================================================
+// 图片加载
+// ============================================================
+$('btnLoad').onclick = () => fileInput.click();
+
+fileInput.onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const img = new Image();
+    img.onload = () => acceptSource(img);
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+};
+
+$('btnSample').onclick = () => {
+  const c = generateSampleApple();
+  acceptSource(c);
+};
+
+function acceptSource(imgOrCanvas) {
+  state.srcImage = imgOrCanvas;
+  state.sliced = null;
+  state.cutPoints = [];
+  state.uiMode = 'idle';
+  drawSourcePreview();
+  setStatus('warn', '图片已加载，点击「在原图上点两点」定义切割线');
+  sliceInfo.textContent = '';
+}
+
+function generateSampleApple() {
+  const c = document.createElement('canvas');
+  c.width = 240; c.height = 260;
+  const ctx = c.getContext('2d');
+  // 苹果体
+  ctx.fillStyle = '#d32f2f';
+  ctx.beginPath();
+  ctx.ellipse(120, 150, 90, 90, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // 下缘阴影
+  ctx.fillStyle = '#a8201c';
+  ctx.beginPath();
+  ctx.ellipse(120, 230, 18, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // 高光
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(90, 115, 22, 30, -0.4, 0, Math.PI * 2);
+  ctx.fill();
+  // 茎
+  ctx.fillStyle = '#4e342e';
+  ctx.fillRect(115, 50, 10, 30);
+  // 叶
+  ctx.fillStyle = '#43a047';
+  ctx.beginPath();
+  ctx.ellipse(145, 60, 22, 11, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+  return c;
+}
+
+function drawSourcePreview() {
+  const img = state.srcImage;
+  drawCheckerboard(sourceCtx, sourceCanvas.width, sourceCanvas.height, 8);
+  if (!img) return;
+  const iw = img.width, ih = img.height;
+  const scale = Math.min(sourceCanvas.width / iw, sourceCanvas.height / ih);
+  const w = iw * scale, h = ih * scale;
+  const ox = (sourceCanvas.width - w) / 2, oy = (sourceCanvas.height - h) / 2;
+  sourceCtx.drawImage(img, ox, oy, w, h);
+  sourceCanvas._scale = scale;
+  sourceCanvas._offset = { x: ox, y: oy };
+
+  // 切割点 / 切割线
+  if (state.cutPoints.length > 0) {
+    sourceCtx.fillStyle = '#00d000';
+    sourceCtx.strokeStyle = '#00d000';
+    sourceCtx.lineWidth = 2;
+    state.cutPoints.forEach(p => {
+      sourceCtx.beginPath();
+      sourceCtx.arc(ox + p.x * scale, oy + p.y * scale, 5, 0, Math.PI * 2);
+      sourceCtx.fill();
+    });
+    if (state.cutPoints.length === 2) {
+      const a = state.cutPoints[0], b = state.cutPoints[1];
+      sourceCtx.beginPath();
+      sourceCtx.moveTo(ox + a.x * scale, oy + a.y * scale);
+      sourceCtx.lineTo(ox + b.x * scale, oy + b.y * scale);
+      sourceCtx.stroke();
+    }
+  }
+}
+
+// ============================================================
+// 切割线定义
+// ============================================================
+$('btnCut').onclick = () => {
+  if (!state.srcImage) { setStatus('warn', '请先加载图片'); return; }
+  state.uiMode = 'defineCut';
+  state.cutPoints = [];
+  state.sliced = null;
+  drawSourcePreview();
+  setStatus('info', '点击原图：第 1 个点');
+};
+
+sourceCanvas.addEventListener('click', (e) => {
+  if (state.uiMode !== 'defineCut') return;
+  const rect = sourceCanvas.getBoundingClientRect();
+  const cx = (e.clientX - rect.left) * (sourceCanvas.width / rect.width);
+  const cy = (e.clientY - rect.top) * (sourceCanvas.height / rect.height);
+  const scale = sourceCanvas._scale;
+  const offset = sourceCanvas._offset;
+  const x = (cx - offset.x) / scale;
+  const y = (cy - offset.y) / scale;
+  state.cutPoints.push({ x, y });
+  if (state.cutPoints.length === 1) {
+    setStatus('info', '点击原图：第 2 个点');
+    drawSourcePreview();
+  } else if (state.cutPoints.length === 2) {
+    prepareSlicedImage();
+    state.uiMode = 'draw';
+    setStatus('ok', '切割线已定义，去右侧画布拖拽吧！');
+    drawSourcePreview();
+  }
+});
+
+function prepareSlicedImage() {
+  const img = state.srcImage;
+  const [p1, p2] = state.cutPoints;
+  const mx = (p1.x + p2.x) / 2;
+  const my = (p1.y + p2.y) / 2;
+  const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+
+  const W = img.width, H = img.height;
+  // 对角线大小 → 旋转后图像必能放下
+  const diag = Math.ceil(Math.hypot(W, H)) + 4;
+
+  const c = document.createElement('canvas');
+  c.width = diag; c.height = diag;
+  const ctx = c.getContext('2d');
+
+  // 把图像绕切割中点旋转 -angle，再平移到画布中心
+  // → 在此画布中，切割线变成水平线 y = diag/2
+  ctx.translate(diag / 2, diag / 2);
+  ctx.rotate(-angle);
+  ctx.drawImage(img, -mx, -my);
+
+  const cutY = diag / 2;
+  state.sliced = {
+    canvas: c,
+    cutY,
+    width: diag,
+    height: diag,
+    topExtent: cutY,
+    bottomExtent: diag - cutY,
+    cutMidpoint: { x: mx, y: my },
+    cutAngle: angle,
+  };
+
+  sliceInfo.textContent = `cut: (${mx.toFixed(0)}, ${my.toFixed(0)}) · angle: ${(angle * 180 / Math.PI).toFixed(1)}°`;
+}
+
+// ============================================================
+// 核心：拉伸贴图算法
+// ============================================================
+// anchor: 切割线在画布上的锚点（鼠标按下处）
+// target: 上半截贴到的位置（鼠标当前位置）
+// 局部坐标系：原点 anchor，+Y 指向远离 target（下半截方向）
+// → ctx.rotate(stretchAngle + π/2) 后 local +Y = canvas 上 (anchor → 远离 target) 方向
+function drawStretchedShape(ctx, sliced, anchor, target, scale = 1) {
+  const dx = target.x - anchor.x;
+  const dy = target.y - anchor.y;
+  const stretchLen = Math.hypot(dx, dy);
+  const stretchAngle = Math.atan2(dy, dx);
+
+  const W = sliced.width;
+  const cutY = sliced.cutY;
+  const topExtent = sliced.topExtent;
+  const bottomExtent = sliced.bottomExtent;
+  // 目标尺寸：横截面 + 上下半截高度按 scale 缩放；中段长度由 stretchLen 决定
+  const Wd = W * scale;
+  const topD = topExtent * scale;
+  const botD = bottomExtent * scale;
+
+  ctx.save();
+  ctx.translate(anchor.x, anchor.y);
+  ctx.rotate(stretchAngle + Math.PI / 2);
+
+  // 下半截：贴在 anchor 这一侧（local +Y 方向）
+  ctx.drawImage(sliced.canvas,
+    0, cutY, W, bottomExtent,
+    -Wd / 2, 0, Wd, botD);
+
+  // 中段：1px 中行 → 拉伸到 stretchLen
+  if (stretchLen > 0.5) {
+    ctx.drawImage(sliced.canvas,
+      0, cutY, W, 1,
+      -Wd / 2, -stretchLen, Wd, stretchLen);
+  }
+
+  // 上半截：在 target 那一侧（local -Y 方向）
+  ctx.drawImage(sliced.canvas,
+    0, 0, W, topExtent,
+    -Wd / 2, -stretchLen - topD, Wd, topD);
+
+  ctx.restore();
+}
+
+// 曲线模式：沿路径采样，每段画一片 1px 中行（旋转贴合局部切线）
+function drawCurvedStretch(ctx, sliced, path, scale = 1) {
+  if (path.length < 2) {
+    drawStretchedShape(ctx, sliced, path[0], path[0], scale);
+    return;
+  }
+  const W = sliced.width;
+  const cutY = sliced.cutY;
+  const topExtent = sliced.topExtent;
+  const bottomExtent = sliced.bottomExtent;
+  const Wd = W * scale;
+  const topD = topExtent * scale;
+  const botD = bottomExtent * scale;
+
+  // 起点：画下半截，沿首段切线对齐
+  const p0 = path[0], p1 = path[1];
+  const startTan = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+  ctx.save();
+  ctx.translate(p0.x, p0.y);
+  ctx.rotate(startTan + Math.PI / 2);
+  ctx.drawImage(sliced.canvas, 0, cutY, W, bottomExtent, -Wd / 2, 0, Wd, botD);
+  ctx.restore();
+
+  // 中段：逐段铺设
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i], b = path[i + 1];
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+    if (segLen < 0.1) continue;
+    const segAng = Math.atan2(b.y - a.y, b.x - a.x);
+    ctx.save();
+    ctx.translate(a.x, a.y);
+    ctx.rotate(segAng + Math.PI / 2);
+    // 把 1px 中行铺到 local Y ∈ [-segLen, 0]；多出 1px 防接缝
+    ctx.drawImage(sliced.canvas, 0, cutY, W, 1, -Wd / 2, -segLen - 0.5, Wd, segLen + 1);
+    ctx.restore();
+  }
+
+  // 终点：画上半截，沿末段切线对齐
+  const n = path.length;
+  const pm = path[n - 2], pn = path[n - 1];
+  const endTan = Math.atan2(pn.y - pm.y, pn.x - pm.x);
+  ctx.save();
+  ctx.translate(pn.x, pn.y);
+  ctx.rotate(endTan + Math.PI / 2);
+  ctx.drawImage(sliced.canvas, 0, 0, W, topExtent, -Wd / 2, -topD, Wd, topD);
+  ctx.restore();
+}
+
+function drawStroke(ctx, stroke) {
+  if (!state.sliced) return;
+  const sc = stroke.scale || 1;
+  if (stroke.curved && stroke.path.length >= 2) {
+    drawCurvedStretch(ctx, state.sliced, stroke.path, sc);
+  } else if (stroke.path.length >= 1) {
+    const anchor = stroke.path[0];
+    const target = stroke.path[stroke.path.length - 1] || anchor;
+    drawStretchedShape(ctx, state.sliced, anchor, target, sc);
+  }
+}
+
+// ============================================================
+// 渲染：committedCanvas（已落定笔画）+ 实时预览
+// ============================================================
+function rebuildCommitted() {
+  committedCtx.clearRect(0, 0, committedCanvas.width, committedCanvas.height);
+  state.strokes.forEach(s => drawStroke(committedCtx, s));
+}
+
+function paint() {
+  mainCtx.clearRect(0, 0, mainCanvas.width, mainCanvas.height);
+  drawCheckerboard(mainCtx, mainCanvas.width, mainCanvas.height, 16);
+  mainCtx.drawImage(committedCanvas, 0, 0);
+  if (state.currentStroke) drawStroke(mainCtx, state.currentStroke);
+}
+
+// ============================================================
+// 鼠标交互
+// ============================================================
+function canvasPoint(e) {
+  const rect = mainCanvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (mainCanvas.width / rect.width);
+  const y = (e.clientY - rect.top) * (mainCanvas.height / rect.height);
+  return { x, y };
+}
+
+mainCanvas.addEventListener('mousedown', (e) => {
+  if (!state.sliced) { setStatus('warn', '请先定义切割线'); return; }
+  const p = canvasPoint(e);
+  state.currentStroke = {
+    path: [p],
+    curved: state.curvedMode,
+    scale: state.brushScale,
+  };
+  paint();
+});
+
+mainCanvas.addEventListener('mousemove', (e) => {
+  if (!state.currentStroke) return;
+  const p = canvasPoint(e);
+  if (state.currentStroke.curved) {
+    const last = state.currentStroke.path[state.currentStroke.path.length - 1];
+    const d = Math.hypot(p.x - last.x, p.y - last.y);
+    if (d > 2.5) state.currentStroke.path.push(p);
+  } else {
+    state.currentStroke.path = [state.currentStroke.path[0], p];
+  }
+  paint();
+});
+
+function endStroke() {
+  if (!state.currentStroke) return;
+  state.strokes.push(state.currentStroke);
+  state.currentStroke = null;
+  rebuildCommitted();
+  paint();
+}
+
+mainCanvas.addEventListener('mouseup', endStroke);
+mainCanvas.addEventListener('mouseleave', () => {
+  if (state.currentStroke) endStroke();
+});
+
+// 触屏支持
+mainCanvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  const t = e.touches[0];
+  mainCanvas.dispatchEvent(new MouseEvent('mousedown', { clientX: t.clientX, clientY: t.clientY }));
+});
+mainCanvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const t = e.touches[0];
+  mainCanvas.dispatchEvent(new MouseEvent('mousemove', { clientX: t.clientX, clientY: t.clientY }));
+});
+mainCanvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  mainCanvas.dispatchEvent(new MouseEvent('mouseup', {}));
+});
+
+// ============================================================
+// 键盘
+// ============================================================
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Shift') setCurved(true);
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    undo();
+  }
+  if (e.key === '[') { e.preventDefault(); bumpBrush(-10); }
+  if (e.key === ']') { e.preventDefault(); bumpBrush(+10); }
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift') setCurved(false);
+});
+
+function bumpBrush(delta) {
+  const slider = $('brushSize');
+  const v = Math.max(parseInt(slider.min), Math.min(parseInt(slider.max), parseInt(slider.value) + delta));
+  slider.value = v;
+  slider.dispatchEvent(new Event('input'));
+}
+
+const brushSlider = $('brushSize');
+const brushSizeVal = $('brushSizeVal');
+brushSlider.addEventListener('input', () => {
+  const pct = parseInt(brushSlider.value);
+  state.brushScale = pct / 100;
+  brushSizeVal.textContent = pct + '%';
+});
+
+function setCurved(v) {
+  state.curvedMode = v;
+  modeStraightBtn.classList.toggle('active', !v);
+  modeCurvedBtn.classList.toggle('active', v);
+}
+modeStraightBtn.onclick = () => setCurved(false);
+modeCurvedBtn.onclick = () => setCurved(true);
+
+// ============================================================
+// 撤销 / 清空 / 导出
+// ============================================================
+function undo() {
+  if (state.strokes.length === 0) return;
+  state.strokes.pop();
+  rebuildCommitted();
+  paint();
+}
+
+$('btnUndo').onclick = undo;
+
+$('btnClear').onclick = () => {
+  if (state.strokes.length === 0) return;
+  if (confirm('清空所有笔画？')) {
+    state.strokes = [];
+    rebuildCommitted();
+    paint();
+  }
+};
+
+$('btnExport').onclick = () => {
+  if (state.strokes.length === 0) { alert('画布为空'); return; }
+  const out = document.createElement('canvas');
+  out.width = mainCanvas.width;
+  out.height = mainCanvas.height;
+  const outCtx = out.getContext('2d');
+  // 不画棋盘 — 透明背景导出
+  state.strokes.forEach(s => drawStroke(outCtx, s));
+  const link = document.createElement('a');
+  link.download = '切片拉伸-' + Date.now() + '.png';
+  link.href = out.toDataURL('image/png');
+  link.click();
+};
+
+// ============================================================
+// 工具
+// ============================================================
+function setStatus(kind, text) {
+  cutStatus.className = 'status ' + kind;
+  cutStatus.textContent = text;
+}
+
+// ============================================================
+// 启动
+// ============================================================
+drawCheckerboard(sourceCtx, sourceCanvas.width, sourceCanvas.height, 8);
+paint();
+</script>
+</body>
+</html>
