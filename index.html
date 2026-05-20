@@ -426,29 +426,31 @@ function drawStretchedShape(ctx, sliced, anchor, target, scale = 1) {
   const bottomExtent = sliced.bottomExtent;
   // 目标尺寸：横截面 + 上下半截高度按 scale 缩放；中段长度由 stretchLen 决定
   const Wd = W * scale;
+  const halfW = Wd / 2;
   const topD = topExtent * scale;
   const botD = bottomExtent * scale;
+  const OVERLAP = 0.75;  // 接缝处每边扩 0.75 px → 1.5 px 重叠吃掉栅格化误差
 
   ctx.save();
   ctx.translate(anchor.x, anchor.y);
   ctx.rotate(stretchAngle + Math.PI / 2);
 
-  // 下半截：贴在 anchor 这一侧（local +Y 方向）
+  // 下半截：贴在 anchor 这一侧（local +Y），近端向中段方向扩 OVERLAP
   ctx.drawImage(sliced.canvas,
     0, cutY, W, bottomExtent,
-    -Wd / 2, 0, Wd, botD);
+    -halfW, -OVERLAP, Wd, botD + OVERLAP);
 
-  // 中段：1px 中行 → 拉伸到 stretchLen
+  // 中段：1px 中行 → 拉伸到 stretchLen，两端各扩 OVERLAP
   if (stretchLen > 0.5) {
     ctx.drawImage(sliced.canvas,
       0, cutY, W, 1,
-      -Wd / 2, -stretchLen, Wd, stretchLen);
+      -halfW, -stretchLen - OVERLAP, Wd, stretchLen + OVERLAP * 2);
   }
 
-  // 上半截：在 target 那一侧（local -Y 方向）
+  // 上半截：在 target 那一侧（local -Y），近端向中段方向扩 OVERLAP
   ctx.drawImage(sliced.canvas,
     0, 0, W, topExtent,
-    -Wd / 2, -stretchLen - topD, Wd, topD);
+    -halfW, -stretchLen - topD, Wd, topD + OVERLAP);
 
   ctx.restore();
 }
@@ -538,27 +540,41 @@ function drawCurvedStretch(ctx, sliced, path, scale = 1) {
     miter[i] = ms;
   }
 
-  // 起点下半截（沿首段切线反向延伸）
+  // 关键：每段沿 path 方向各扩 0.75 px，让相邻段 clip 在公共边上 1.5 px 重叠，
+  // 吃掉 1 px 栅格化误差 → 段间无缝。上下半截也同样扩，与首/末段重叠。
+  const OVERLAP = 0.75;
+
+  // 起点下半截（沿首段切线反向延伸；近端沿 +tan 扩 OVERLAP 与第一段重叠）
   const p0 = path[0], p1 = path[1];
+  const startSegLen = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
+  const startTanX = (p1.x - p0.x) / startSegLen, startTanY = (p1.y - p0.y) / startSegLen;
   const startTan = Math.atan2(p1.y - p0.y, p1.x - p0.x);
   ctx.save();
-  ctx.translate(p0.x, p0.y);
+  ctx.translate(p0.x + startTanX * OVERLAP, p0.y + startTanY * OVERLAP);
   ctx.rotate(startTan + Math.PI / 2);
-  ctx.drawImage(sliced.canvas, 0, cutY, W, bottomExtent, -halfW, 0, Wd, botD);
+  // 沿 local +Y 方向（远离 path[1]）画下半截，多画 OVERLAP 高度覆盖近端
+  ctx.drawImage(sliced.canvas, 0, cutY, W, bottomExtent, -halfW, -OVERLAP, Wd, botD + OVERLAP);
   ctx.restore();
 
-  // 中段：每相邻两点画一个梯形 quad（= 2 个 affine 三角形）
-  // 源：纯 1px 中行的独立 midRow canvas，整个 (0,0)-(W,1) → dest 梯形
+  // 中段：每相邻两点画一个梯形 quad（= 2 个 affine 三角形），沿 segment 方向各扩 OVERLAP
+  // 源：纯 1px 中行的独立 midRow canvas，整个 (0,0)-(W,1) → dest 梯形（已扩展）
   // 映射：+perp 端 ↔ midRow x=0；-perp 端 ↔ midRow x=W
   for (let i = 0; i < path.length - 1; i++) {
     const a = path[i], b = path[i + 1];
     const na = perp[i], nb = perp[i + 1];
     const ma = halfW * miter[i], mb = halfW * miter[i + 1];
 
-    const aLx = a.x + na.x * ma, aLy = a.y + na.y * ma;
-    const aRx = a.x - na.x * ma, aRy = a.y - na.y * ma;
-    const bLx = b.x + nb.x * mb, bLy = b.y + nb.y * mb;
-    const bRx = b.x - nb.x * mb, bRy = b.y - nb.y * mb;
+    // 沿 segment 方向各扩 OVERLAP 像素，吸收相邻段 clip 栅格化的 1px 误差
+    const segDx = b.x - a.x, segDy = b.y - a.y;
+    const segLen = Math.hypot(segDx, segDy) || 1;
+    const sux = segDx / segLen * OVERLAP, suy = segDy / segLen * OVERLAP;
+    const axE = a.x - sux, ayE = a.y - suy;
+    const bxE = b.x + sux, byE = b.y + suy;
+
+    const aLx = axE + na.x * ma, aLy = ayE + na.y * ma;
+    const aRx = axE - na.x * ma, aRy = ayE - na.y * ma;
+    const bLx = bxE + nb.x * mb, bLy = byE + nb.y * mb;
+    const bRx = bxE - nb.x * mb, bRy = byE - nb.y * mb;
 
     // T1: midRow (0,0)-(W,0)-(W,1) → dest aL-aR-bR
     drawAffineTri(ctx, sliced.midRow,
@@ -570,14 +586,17 @@ function drawCurvedStretch(ctx, sliced, path, scale = 1) {
       aLx, aLy, bRx, bRy, bLx, bLy);
   }
 
-  // 终点上半截
+  // 终点上半截（沿末段切线方向；近端沿 -tan 扩 OVERLAP 与最后一段重叠）
   const n = path.length;
   const pm = path[n - 2], pn = path[n - 1];
+  const endSegLen = Math.hypot(pn.x - pm.x, pn.y - pm.y) || 1;
+  const endTanX = (pn.x - pm.x) / endSegLen, endTanY = (pn.y - pm.y) / endSegLen;
   const endTan = Math.atan2(pn.y - pm.y, pn.x - pm.x);
   ctx.save();
-  ctx.translate(pn.x, pn.y);
+  ctx.translate(pn.x - endTanX * OVERLAP, pn.y - endTanY * OVERLAP);
   ctx.rotate(endTan + Math.PI / 2);
-  ctx.drawImage(sliced.canvas, 0, 0, W, topExtent, -halfW, -topD, Wd, topD);
+  // 沿 local -Y 方向（远离 path[n-2]）画上半截，近端多画 OVERLAP 高度覆盖远端
+  ctx.drawImage(sliced.canvas, 0, 0, W, topExtent, -halfW, -topD, Wd, topD + OVERLAP);
   ctx.restore();
 }
 
