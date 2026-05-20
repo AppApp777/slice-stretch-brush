@@ -53,12 +53,20 @@ A-切片拉伸笔刷/
 - 下半截贴 local Y ∈ [0, botD]、中段（1px 行）拉伸到 [-stretchLen, 0]、上半截贴 [-stretchLen - topD, -stretchLen]。
 - `scale` 缩放横截面 + 上下半截高度；中段长度不缩放（始终等于鼠标拖距）。
 
-### 曲线拉伸 `drawCurvedStretch(ctx, sliced, path, scale)`
+### 曲线拉伸 `drawCurvedStretch(ctx, sliced, path, scale)` —— v0.3 起用 affine quad strip
 
-- 路径每 2.5 px 采样一点。
+- 路径每 1.5 px 采样一点。
+- 每个 path 点算「联结法线」+ miter 长度（内部点 = 相邻两段法线之和归一化；ms = 1/|cos(半夹角)|，capped 4）。
 - 起点画下半截（沿首段切线），终点画上半截（沿末段切线）。
-- 中段：每两个相邻点之间画一片 1px 中行，旋转贴合局部切线方向，长度 = 段长。
-- 接缝处用 `+1px overlap` 兜底防缝隙。
+- 中段：相邻两点画一个**梯形 quad**（= 2 个 affine 三角形，`drawAffineTri` 助手），源 = 单独抽出的 `sliced.midRow`（W×1 canvas）。相邻段共享 `path[i] ± perp[i]` 端点 → **几何上严丝合缝，没有 gap，没有 alpha 叠加缝**。
+- 历史教训：v0.2 的「每段矩形 stamp + 平分角补丁」在端点用不同方向短边相接，源 1px 中行两端列 alpha < 100% → 公共边叠加只到 75%，肉眼看仍是稀缝。v0.3 彻底废弃该方案，详见 BUGS.md。
+
+### 笔触属性（alpha / feather / hue）
+
+- 每一笔记录 4 个属性：scale / alpha / feather / hue。
+- 无 filter 时直接画到目标 ctx。
+- 有 filter（feather > 0 / hue ≠ 0 / alpha < 1）：先画到全局 `offscreenCanvas`（无 filter），再用 `ctx.filter = 'blur(...) hue-rotate(...)'` + `globalAlpha` 一次性 `drawImage(offscreen)` 到目标——**避免每个 affine 三角形都触发 GPU filter**。
+- 撤销/重做共用 `state.redoStack`；新笔画落定清空它。
 
 ## 不要做的事
 

@@ -35,7 +35,11 @@ button.ghost { background: transparent; }
 #sliceInfo { font-size: 11px; color: #666; padding: 4px 0; font-family: monospace; }
 .slider-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .slider-row input[type=range] { flex: 1; }
-.slider-row .val { font-family: monospace; font-size: 12px; color: #555; min-width: 38px; text-align: right; }
+.slider-row .val { font-family: monospace; font-size: 12px; color: #555; min-width: 42px; text-align: right; }
+.slider-row .slabel { font-size: 11px; color: #666; min-width: 36px; }
+.row > button { flex: 1; }
+.kbdhint { background: #fafafa; border: 1px solid #eee; border-radius: 4px; padding: 6px 8px; font-size: 11px; color: #666; line-height: 1.7; }
+.kbdhint .kbd { margin-right: 4px; }
 </style>
 </head>
 <body>
@@ -54,7 +58,7 @@ button.ghost { background: transparent; }
 
     <div class="section">
       <div class="section-title">2 · 定义切割线</div>
-      <button id="btnCut">在原图上点两点 ↘</button>
+      <button id="btnCut">在原图上拖一条线 ↘</button>
       <canvas id="sourceCanvas" width="260" height="260"></canvas>
       <div id="cutStatus" class="status warn">尚未加载图片</div>
       <div id="sliceInfo"></div>
@@ -75,17 +79,45 @@ button.ghost { background: transparent; }
     <div class="section">
       <div class="section-title">4 · 笔触粗细（<span class="kbd">[</span> / <span class="kbd">]</span>）</div>
       <div class="slider-row">
+        <label class="slabel">粗细</label>
         <input type="range" id="brushSize" min="5" max="300" value="100" step="1">
         <span class="val" id="brushSizeVal">100%</span>
       </div>
-      <div class="hint">每一笔记录画时的粗细。改滑杆后再画就是新粗细。</div>
+      <div class="slider-row">
+        <label class="slabel">透明</label>
+        <input type="range" id="brushAlpha" min="5" max="100" value="100" step="1">
+        <span class="val" id="brushAlphaVal">100%</span>
+      </div>
+      <div class="slider-row">
+        <label class="slabel">羽化</label>
+        <input type="range" id="brushFeather" min="0" max="20" value="0" step="1">
+        <span class="val" id="brushFeatherVal">0 px</span>
+      </div>
+      <div class="slider-row">
+        <label class="slabel">色相</label>
+        <input type="range" id="brushHue" min="-180" max="180" value="0" step="1">
+        <span class="val" id="brushHueVal">0°</span>
+      </div>
+      <div class="hint">每一笔记录画时的属性。改滑杆后再画就是新设定。</div>
     </div>
 
     <div class="section">
       <div class="section-title">操作</div>
-      <button id="btnUndo">撤销最后一笔 <span class="kbd">Ctrl+Z</span></button>
+      <div class="row">
+        <button id="btnUndo" title="Ctrl+Z">↶ 撤销</button>
+        <button id="btnRedo" title="Ctrl+Shift+Z">↷ 重做</button>
+      </div>
       <button id="btnClear">清空画布</button>
       <button id="btnExport" class="primary">导出 PNG</button>
+    </div>
+
+    <div class="section">
+      <div class="section-title">快捷键</div>
+      <div class="kbdhint">
+        <span class="kbd">Shift</span> 切曲线<br>
+        <span class="kbd">[</span> <span class="kbd">]</span> 粗细 ±10%<br>
+        <span class="kbd">Ctrl+Z</span> 撤销 · <span class="kbd">Ctrl+Shift+Z</span> 重做
+      </div>
     </div>
   </div>
 
@@ -105,12 +137,21 @@ const state = {
   srcImage: null,           // HTMLImageElement / HTMLCanvasElement
   sliced: null,             // { canvas, cutY, width, height, topExtent, bottomExtent, cutMidpoint, cutAngle }
   uiMode: 'idle',           // 'idle' | 'defineCut' | 'draw'
-  cutPoints: [],            // 在原图坐标中的两个点
+  cutPoints: [],            // 在原图坐标中的两个点（拖动中也用它做实时预览）
+  cutDragging: false,       // 切割线是否正在拖动
   currentStroke: null,      // 正在画的一笔
   strokes: [],              // 已落定的笔画
+  redoStack: [],            // 重做栈
   curvedMode: false,        // false=直线 true=曲线
   brushScale: 1.0,          // 笔触缩放（1.0 = 100%）
+  brushAlpha: 1.0,          // 笔触透明度（0~1）
+  brushFeather: 0,          // 边缘羽化半径（px）
+  brushHue: 0,              // 色相旋转（度）
 };
+
+// offscreen canvas：当笔触有 filter / alpha 时，先画到这里再一次性贴到目标 ctx
+const offscreenCanvas = document.createElement('canvas');
+let offscreenCtx = null;
 
 // ============================================================
 // DOM
@@ -131,6 +172,11 @@ const committedCanvas = document.createElement('canvas');
 committedCanvas.width = mainCanvas.width;
 committedCanvas.height = mainCanvas.height;
 const committedCtx = committedCanvas.getContext('2d');
+
+// offscreen canvas：filter / alpha 笔触先画在这里，再一次性贴到目标
+offscreenCanvas.width = mainCanvas.width;
+offscreenCanvas.height = mainCanvas.height;
+offscreenCtx = offscreenCanvas.getContext('2d');
 
 // ============================================================
 // 棋盘格（透明背景视觉提示）
@@ -172,7 +218,7 @@ function acceptSource(imgOrCanvas) {
   state.cutPoints = [];
   state.uiMode = 'idle';
   drawSourcePreview();
-  setStatus('warn', '图片已加载，点击「在原图上点两点」定义切割线');
+  setStatus('warn', '图片已加载，点击「在原图上拖一条线」定义切割线');
   sliceInfo.textContent = '';
 }
 
@@ -239,36 +285,83 @@ function drawSourcePreview() {
 }
 
 // ============================================================
-// 切割线定义
+// 切割线定义（按下 → 拖动预览 → 抬起提交）
 // ============================================================
 $('btnCut').onclick = () => {
   if (!state.srcImage) { setStatus('warn', '请先加载图片'); return; }
   state.uiMode = 'defineCut';
   state.cutPoints = [];
+  state.cutDragging = false;
   state.sliced = null;
   drawSourcePreview();
-  setStatus('info', '点击原图：第 1 个点');
+  setStatus('info', '在原图上按下并拖动一条线（任意角度）');
 };
 
-sourceCanvas.addEventListener('click', (e) => {
-  if (state.uiMode !== 'defineCut') return;
+function sourceCanvasPoint(e) {
   const rect = sourceCanvas.getBoundingClientRect();
   const cx = (e.clientX - rect.left) * (sourceCanvas.width / rect.width);
   const cy = (e.clientY - rect.top) * (sourceCanvas.height / rect.height);
   const scale = sourceCanvas._scale;
   const offset = sourceCanvas._offset;
-  const x = (cx - offset.x) / scale;
-  const y = (cy - offset.y) / scale;
-  state.cutPoints.push({ x, y });
-  if (state.cutPoints.length === 1) {
-    setStatus('info', '点击原图：第 2 个点');
+  return { x: (cx - offset.x) / scale, y: (cy - offset.y) / scale };
+}
+
+sourceCanvas.addEventListener('mousedown', (e) => {
+  if (state.uiMode !== 'defineCut' || !state.srcImage) return;
+  const p = sourceCanvasPoint(e);
+  state.cutDragging = true;
+  state.cutPoints = [p, p];
+  drawSourcePreview();
+});
+
+sourceCanvas.addEventListener('mousemove', (e) => {
+  if (!state.cutDragging) return;
+  state.cutPoints[1] = sourceCanvasPoint(e);
+  drawSourcePreview();
+});
+
+function finishCutDrag(e, canceled) {
+  if (!state.cutDragging) return;
+  const p = e ? sourceCanvasPoint(e) : state.cutPoints[1];
+  state.cutDragging = false;
+  const p1 = state.cutPoints[0];
+  const d = Math.hypot(p.x - p1.x, p.y - p1.y);
+  if (canceled || d < 3) {
+    state.cutPoints = [];
     drawSourcePreview();
-  } else if (state.cutPoints.length === 2) {
-    prepareSlicedImage();
-    state.uiMode = 'draw';
-    setStatus('ok', '切割线已定义，去右侧画布拖拽吧！');
-    drawSourcePreview();
+    setStatus('warn', canceled ? '已取消，请重新拖动一条切割线' : '切割线太短，请再拖一次');
+    return;
   }
+  state.cutPoints = [p1, p];
+  prepareSlicedImage();
+  state.uiMode = 'draw';
+  setStatus('ok', '切割线已定义，去右侧画布拖拽吧！');
+  drawSourcePreview();
+}
+
+sourceCanvas.addEventListener('mouseup', (e) => finishCutDrag(e, false));
+// 拖出框释放也算正常提交（用当前 cutPoints[1]）
+window.addEventListener('mouseup', () => {
+  if (state.cutDragging) finishCutDrag(null, false);
+});
+
+// 触屏支持（原图）
+sourceCanvas.addEventListener('touchstart', (e) => {
+  if (state.uiMode !== 'defineCut') return;
+  e.preventDefault();
+  const t = e.touches[0];
+  sourceCanvas.dispatchEvent(new MouseEvent('mousedown', { clientX: t.clientX, clientY: t.clientY }));
+});
+sourceCanvas.addEventListener('touchmove', (e) => {
+  if (!state.cutDragging) return;
+  e.preventDefault();
+  const t = e.touches[0];
+  sourceCanvas.dispatchEvent(new MouseEvent('mousemove', { clientX: t.clientX, clientY: t.clientY }));
+});
+sourceCanvas.addEventListener('touchend', (e) => {
+  if (!state.cutDragging) return;
+  e.preventDefault();
+  sourceCanvas.dispatchEvent(new MouseEvent('mouseup', {}));
 });
 
 function prepareSlicedImage() {
@@ -293,8 +386,15 @@ function prepareSlicedImage() {
   ctx.drawImage(img, -mx, -my);
 
   const cutY = diag / 2;
+
+  // 抽出切割线那一行做独立 1px 高度 canvas，避免 affine 映射时采样到相邻行污染腰部
+  const mid = document.createElement('canvas');
+  mid.width = diag; mid.height = 1;
+  mid.getContext('2d').drawImage(c, 0, cutY, diag, 1, 0, 0, diag, 1);
+
   state.sliced = {
     canvas: c,
+    midRow: mid,
     cutY,
     width: diag,
     height: diag,
@@ -353,9 +453,44 @@ function drawStretchedShape(ctx, sliced, anchor, target, scale = 1) {
   ctx.restore();
 }
 
-// 曲线模式：沿路径采样，每段画一片 1px 中行（旋转贴合局部切线）
+// 仿射三角形纹理映射：把源 (sx0..sx2,sy0..sy2) 三角形映到 dest (dx0..dx2,dy0..dy2)。
+// 用 clip + setTransform + drawImage 实现。dest 三角形外像素被 clip 裁掉。
+function drawAffineTri(ctx, src,
+                       sx0, sy0, sx1, sy1, sx2, sy2,
+                       dx0, dy0, dx1, dy1, dx2, dy2) {
+  const ax = sx1 - sx0, ay = sy1 - sy0;
+  const bx = sx2 - sx0, by = sy2 - sy0;
+  const det = ax * by - bx * ay;
+  if (Math.abs(det) < 1e-9) return;
+  const idet = 1 / det;
+  const u1x = dx1 - dx0, u1y = dy1 - dy0;
+  const u2x = dx2 - dx0, u2y = dy2 - dy0;
+  // 求 affine：dx = m11*sx + m12*sy + e ; dy = m21*sx + m22*sy + f
+  const m11 = (u1x * by - u2x * ay) * idet;
+  const m12 = (-u1x * bx + u2x * ax) * idet;
+  const m21 = (u1y * by - u2y * ay) * idet;
+  const m22 = (-u1y * bx + u2y * ax) * idet;
+  const e = dx0 - m11 * sx0 - m12 * sy0;
+  const f = dy0 - m21 * sx0 - m22 * sy0;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(dx0, dy0);
+  ctx.lineTo(dx1, dy1);
+  ctx.lineTo(dx2, dy2);
+  ctx.closePath();
+  ctx.clip();
+  // ctx.transform(a,b,c,d,e,f) → 矩阵 [a c e; b d f]
+  ctx.transform(m11, m21, m12, m22, e, f);
+  ctx.drawImage(src, 0, 0);
+  ctx.restore();
+}
+
+// 曲线模式：相邻两点之间画「梯形 quad（= 2 个 affine 三角形）」
+// 相邻段共享 path[i] ± perp[i] 端点 → 几何上严丝合缝、无 alpha 叠加缝
 function drawCurvedStretch(ctx, sliced, path, scale = 1) {
-  if (path.length < 2) {
+  if (path.length < 1) return;
+  if (path.length === 1) {
     drawStretchedShape(ctx, sliced, path[0], path[0], scale);
     return;
   }
@@ -364,82 +499,123 @@ function drawCurvedStretch(ctx, sliced, path, scale = 1) {
   const topExtent = sliced.topExtent;
   const bottomExtent = sliced.bottomExtent;
   const Wd = W * scale;
+  const halfW = Wd / 2;
   const topD = topExtent * scale;
   const botD = bottomExtent * scale;
 
-  // 起点：画下半截，沿首段切线对齐
+  // 每个 path 点的「联结法线」+ miter 拉长系数
+  // 内部点：相邻两段法线之和归一化（= 切线平分角法线）；ms = 1/|cos(半夹角)| capped 4
+  const perp = new Array(path.length);
+  const miter = new Array(path.length);
+  for (let i = 0; i < path.length; i++) {
+    let nx, ny, ms = 1;
+    if (i === 0) {
+      const dx = path[1].x - path[0].x, dy = path[1].y - path[0].y;
+      const d = Math.hypot(dx, dy) || 1;
+      nx = dy / d; ny = -dx / d;
+    } else if (i === path.length - 1) {
+      const dx = path[i].x - path[i - 1].x, dy = path[i].y - path[i - 1].y;
+      const d = Math.hypot(dx, dy) || 1;
+      nx = dy / d; ny = -dx / d;
+    } else {
+      const dx1 = path[i].x - path[i - 1].x, dy1 = path[i].y - path[i - 1].y;
+      const d1 = Math.hypot(dx1, dy1) || 1;
+      const dx2 = path[i + 1].x - path[i].x, dy2 = path[i + 1].y - path[i].y;
+      const d2 = Math.hypot(dx2, dy2) || 1;
+      const n1x = dy1 / d1, n1y = -dx1 / d1;
+      const n2x = dy2 / d2, n2y = -dx2 / d2;
+      const sx = n1x + n2x, sy = n1y + n2y;
+      const sd = Math.hypot(sx, sy);
+      if (sd < 0.01) { nx = n1x; ny = n1y; ms = 1; }
+      else {
+        nx = sx / sd; ny = sy / sd;
+        const cosHalf = Math.abs(n1x * nx + n1y * ny);
+        ms = cosHalf > 0.1 ? 1 / cosHalf : 10;
+        if (ms > 4) ms = 4;
+      }
+    }
+    perp[i] = { x: nx, y: ny };
+    miter[i] = ms;
+  }
+
+  // 起点下半截（沿首段切线反向延伸）
   const p0 = path[0], p1 = path[1];
   const startTan = Math.atan2(p1.y - p0.y, p1.x - p0.x);
   ctx.save();
   ctx.translate(p0.x, p0.y);
   ctx.rotate(startTan + Math.PI / 2);
-  ctx.drawImage(sliced.canvas, 0, cutY, W, bottomExtent, -Wd / 2, 0, Wd, botD);
+  ctx.drawImage(sliced.canvas, 0, cutY, W, bottomExtent, -halfW, 0, Wd, botD);
   ctx.restore();
 
-  // 中段：逐段铺设
+  // 中段：每相邻两点画一个梯形 quad（= 2 个 affine 三角形）
+  // 源：纯 1px 中行的独立 midRow canvas，整个 (0,0)-(W,1) → dest 梯形
+  // 映射：+perp 端 ↔ midRow x=0；-perp 端 ↔ midRow x=W
   for (let i = 0; i < path.length - 1; i++) {
     const a = path[i], b = path[i + 1];
-    const segLen = Math.hypot(b.x - a.x, b.y - a.y);
-    if (segLen < 0.1) continue;
-    const segAng = Math.atan2(b.y - a.y, b.x - a.x);
-    ctx.save();
-    ctx.translate(a.x, a.y);
-    ctx.rotate(segAng + Math.PI / 2);
-    // 把 1px 中行铺到 local Y ∈ [-segLen, 0]；多出 1px 防接缝
-    ctx.drawImage(sliced.canvas, 0, cutY, W, 1, -Wd / 2, -segLen - 0.5, Wd, segLen + 1);
-    ctx.restore();
+    const na = perp[i], nb = perp[i + 1];
+    const ma = halfW * miter[i], mb = halfW * miter[i + 1];
+
+    const aLx = a.x + na.x * ma, aLy = a.y + na.y * ma;
+    const aRx = a.x - na.x * ma, aRy = a.y - na.y * ma;
+    const bLx = b.x + nb.x * mb, bLy = b.y + nb.y * mb;
+    const bRx = b.x - nb.x * mb, bRy = b.y - nb.y * mb;
+
+    // T1: midRow (0,0)-(W,0)-(W,1) → dest aL-aR-bR
+    drawAffineTri(ctx, sliced.midRow,
+      0, 0, W, 0, W, 1,
+      aLx, aLy, aRx, aRy, bRx, bRy);
+    // T2: midRow (0,0)-(W,1)-(0,1) → dest aL-bR-bL
+    drawAffineTri(ctx, sliced.midRow,
+      0, 0, W, 1, 0, 1,
+      aLx, aLy, bRx, bRy, bLx, bLy);
   }
 
-  // 接缝补丁（round-join）：每个内部 path 点画一片平分角方向的中行
-  // 高度 = max(2, |Δθ| * Wd / 2)，外侧缝隙正好被这片填掉
-  for (let i = 1; i < path.length - 1; i++) {
-    const prev = path[i - 1], cur = path[i], next = path[i + 1];
-    const tanIn = Math.atan2(cur.y - prev.y, cur.x - prev.x);
-    const tanOut = Math.atan2(next.y - cur.y, next.x - cur.x);
-
-    // 平分角 = 两个方向向量的和的方向（自动处理 ±π 边界）
-    const bx = Math.cos(tanIn) + Math.cos(tanOut);
-    const by = Math.sin(tanIn) + Math.sin(tanOut);
-    if (Math.hypot(bx, by) < 0.01) continue; // 反向 180° 时跳过
-    const bisectAng = Math.atan2(by, bx);
-
-    // 夹角差（-π ~ π）
-    let dAng = tanOut - tanIn;
-    while (dAng > Math.PI) dAng -= 2 * Math.PI;
-    while (dAng < -Math.PI) dAng += 2 * Math.PI;
-
-    if (Math.abs(dAng) < 0.03) continue; // 近直线段跳过，省 drawImage
-
-    // 缝隙公式：(Wd/2) * tan(|Δθ|/2)，stamp 取其 2 倍保险
-    const stampH = Math.max(2, Wd * Math.tan(Math.abs(dAng) / 2));
-    ctx.save();
-    ctx.translate(cur.x, cur.y);
-    ctx.rotate(bisectAng + Math.PI / 2);
-    ctx.drawImage(sliced.canvas, 0, cutY, W, 1, -Wd / 2, -stampH / 2, Wd, stampH);
-    ctx.restore();
-  }
-
-  // 终点：画上半截，沿末段切线对齐
+  // 终点上半截
   const n = path.length;
   const pm = path[n - 2], pn = path[n - 1];
   const endTan = Math.atan2(pn.y - pm.y, pn.x - pm.x);
   ctx.save();
   ctx.translate(pn.x, pn.y);
   ctx.rotate(endTan + Math.PI / 2);
-  ctx.drawImage(sliced.canvas, 0, 0, W, topExtent, -Wd / 2, -topD, Wd, topD);
+  ctx.drawImage(sliced.canvas, 0, 0, W, topExtent, -halfW, -topD, Wd, topD);
   ctx.restore();
 }
 
 function drawStroke(ctx, stroke) {
   if (!state.sliced) return;
   const sc = stroke.scale || 1;
-  if (stroke.curved && stroke.path.length >= 2) {
-    drawCurvedStretch(ctx, state.sliced, stroke.path, sc);
-  } else if (stroke.path.length >= 1) {
-    const anchor = stroke.path[0];
-    const target = stroke.path[stroke.path.length - 1] || anchor;
-    drawStretchedShape(ctx, state.sliced, anchor, target, sc);
+  const alpha = stroke.alpha !== undefined ? stroke.alpha : 1;
+  const feather = stroke.feather || 0;
+  const hue = stroke.hue || 0;
+  const needsOffscreen = feather > 0 || hue !== 0 || alpha < 1;
+
+  const drawGeom = (targetCtx) => {
+    if (stroke.curved && stroke.path.length >= 2) {
+      drawCurvedStretch(targetCtx, state.sliced, stroke.path, sc);
+    } else if (stroke.path.length >= 1) {
+      const anchor = stroke.path[0];
+      const target = stroke.path[stroke.path.length - 1] || anchor;
+      drawStretchedShape(targetCtx, state.sliced, anchor, target, sc);
+    }
+  };
+
+  if (!needsOffscreen) {
+    drawGeom(ctx);
+    return;
   }
+
+  // 先画到 offscreen，无 filter；再用 filter 一次性贴到 ctx
+  offscreenCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+  drawGeom(offscreenCtx);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const filters = [];
+  if (feather > 0) filters.push(`blur(${feather}px)`);
+  if (hue !== 0) filters.push(`hue-rotate(${hue}deg)`);
+  if (filters.length) ctx.filter = filters.join(' ');
+  ctx.drawImage(offscreenCanvas, 0, 0);
+  ctx.restore();
 }
 
 // ============================================================
@@ -474,7 +650,12 @@ mainCanvas.addEventListener('mousedown', (e) => {
     path: [p],
     curved: state.curvedMode,
     scale: state.brushScale,
+    alpha: state.brushAlpha,
+    feather: state.brushFeather,
+    hue: state.brushHue,
   };
+  // 新笔画落定时会清空 redo 栈；按下时也清一次，让"画了就不能 redo 之前的"语义直观
+  state.redoStack = [];
   paint();
 });
 
@@ -527,7 +708,11 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Shift') setCurved(true);
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
     e.preventDefault();
-    undo();
+    if (e.shiftKey) redo(); else undo();
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+    e.preventDefault();
+    redo();
   }
   if (e.key === '[') { e.preventDefault(); bumpBrush(-10); }
   if (e.key === ']') { e.preventDefault(); bumpBrush(+10); }
@@ -551,6 +736,30 @@ brushSlider.addEventListener('input', () => {
   brushSizeVal.textContent = pct + '%';
 });
 
+const alphaSlider = $('brushAlpha');
+const alphaVal = $('brushAlphaVal');
+alphaSlider.addEventListener('input', () => {
+  const pct = parseInt(alphaSlider.value);
+  state.brushAlpha = pct / 100;
+  alphaVal.textContent = pct + '%';
+});
+
+const featherSlider = $('brushFeather');
+const featherVal = $('brushFeatherVal');
+featherSlider.addEventListener('input', () => {
+  const v = parseInt(featherSlider.value);
+  state.brushFeather = v;
+  featherVal.textContent = v + ' px';
+});
+
+const hueSlider = $('brushHue');
+const hueVal = $('brushHueVal');
+hueSlider.addEventListener('input', () => {
+  const v = parseInt(hueSlider.value);
+  state.brushHue = v;
+  hueVal.textContent = v + '°';
+});
+
 function setCurved(v) {
   state.curvedMode = v;
   modeStraightBtn.classList.toggle('active', !v);
@@ -564,17 +773,28 @@ modeCurvedBtn.onclick = () => setCurved(true);
 // ============================================================
 function undo() {
   if (state.strokes.length === 0) return;
-  state.strokes.pop();
+  const s = state.strokes.pop();
+  state.redoStack.push(s);
+  rebuildCommitted();
+  paint();
+}
+
+function redo() {
+  if (state.redoStack.length === 0) return;
+  const s = state.redoStack.pop();
+  state.strokes.push(s);
   rebuildCommitted();
   paint();
 }
 
 $('btnUndo').onclick = undo;
+$('btnRedo').onclick = redo;
 
 $('btnClear').onclick = () => {
   if (state.strokes.length === 0) return;
   if (confirm('清空所有笔画？')) {
     state.strokes = [];
+    state.redoStack = [];
     rebuildCommitted();
     paint();
   }
