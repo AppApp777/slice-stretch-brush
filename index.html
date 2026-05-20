@@ -776,9 +776,16 @@ function drawAffineTri(ctx, src,
   ctx.restore();
 }
 
-// 曲线模式：相邻两点之间画「梯形 quad（= 2 个 affine 三角形）」
-// 相邻段共享 path[i] ± perp[i] 端点 → 几何上严丝合缝、无 alpha 叠加缝
-// taper = true 时末段平滑收尖到 0，形成笔锋
+// 曲线模式 · v0.5 密集 stamp brush
+// 关键：抛弃 affine triangle + clip 方案——clip 是 1-bit 栅格化，1px 浮点误差
+// 永远会让相邻段公共边上漏白缝。
+//
+// 改用「沿 path 每 STAMP_STEP px 画一个 W × STAMP_H 的矩形 stamp」：
+// - drawImage(midRow, ..., -halfW, -STAMP_H/2, Wd, STAMP_H) 直接旋转贴切线
+// - 没有 ctx.clip()，没有 affine triangle 边界 → 没有任何 clip 栅格化误差
+// - 相邻 stamp 沿切线方向重叠 STAMP_H - STAMP_STEP > 0 → 段内完全密铺
+// - 弯道处 stamp 朝不同切线方向但距离极小 → 外侧楔形 gap < 0.5 px 不可见
+// - 急弯加 round-join 补丁 stamp（沿平分角方向）兜底
 function drawCurvedStretch(ctx, sliced, path, scale = 1, taper = false) {
   if (path.length < 1) return;
   if (path.length === 1) {
@@ -793,110 +800,98 @@ function drawCurvedStretch(ctx, sliced, path, scale = 1, taper = false) {
   const halfW = Wd / 2;
   const topD = topExtent * scale;
   const botD = bottomExtent * scale;
-
-  // 每个 path 点的「联结法线」+ miter 拉长系数
-  // 内部点：相邻两段法线之和归一化（= 切线平分角法线）；ms = 1/|cos(半夹角)| capped 4
-  const perp = new Array(path.length);
-  const miter = new Array(path.length);
-  for (let i = 0; i < path.length; i++) {
-    let nx, ny, ms = 1;
-    if (i === 0) {
-      const dx = path[1].x - path[0].x, dy = path[1].y - path[0].y;
-      const d = Math.hypot(dx, dy) || 1;
-      nx = dy / d; ny = -dx / d;
-    } else if (i === path.length - 1) {
-      const dx = path[i].x - path[i - 1].x, dy = path[i].y - path[i - 1].y;
-      const d = Math.hypot(dx, dy) || 1;
-      nx = dy / d; ny = -dx / d;
-    } else {
-      const dx1 = path[i].x - path[i - 1].x, dy1 = path[i].y - path[i - 1].y;
-      const d1 = Math.hypot(dx1, dy1) || 1;
-      const dx2 = path[i + 1].x - path[i].x, dy2 = path[i + 1].y - path[i].y;
-      const d2 = Math.hypot(dx2, dy2) || 1;
-      const n1x = dy1 / d1, n1y = -dx1 / d1;
-      const n2x = dy2 / d2, n2y = -dx2 / d2;
-      const sx = n1x + n2x, sy = n1y + n2y;
-      const sd = Math.hypot(sx, sy);
-      if (sd < 0.01) { nx = n1x; ny = n1y; ms = 1; }
-      else {
-        nx = sx / sd; ny = sy / sd;
-        const cosHalf = Math.abs(n1x * nx + n1y * ny);
-        ms = cosHalf > 0.1 ? 1 / cosHalf : 10;
-        if (ms > 4) ms = 4;
-      }
-    }
-    perp[i] = { x: nx, y: ny };
-    miter[i] = ms;
-  }
-
-  // 末端收尖：把最末 taperLen 段的 miter 缩到 0（smoothstep 曲线）
-  if (taper && path.length > 4) {
-    const taperLen = Math.min(16, Math.max(4, Math.floor(path.length / 4)));
-    for (let k = 1; k <= taperLen; k++) {
-      const idx = path.length - 1 - taperLen + k;
-      if (idx < 0 || idx >= path.length) continue;
-      const t = k / taperLen;          // 0 → 1
-      const factor = 1 - t * t * (3 - 2 * t);  // smoothstep（1 → 0）
-      miter[idx] *= factor;
-    }
-  }
-
-  // 关键：每段沿 path 方向各扩 0.75 px，让相邻段 clip 在公共边上 1.5 px 重叠，
-  // 吃掉 1 px 栅格化误差 → 段间无缝。上下半截也同样扩，与首/末段重叠。
   const OVERLAP = 0.75;
 
-  // 起点下半截（沿首段切线反向延伸；近端沿 +tan 扩 OVERLAP 与第一段重叠）
+  // stamp 参数：沿 path 每 STAMP_STEP px 一个 stamp，stamp 沿切线方向高 STAMP_H
+  // 重叠量 = STAMP_H - STAMP_STEP；重叠 > 1.5 px 可完全吃掉栅格化误差 + 急弯外缝
+  const STAMP_STEP = 0.4;
+  const STAMP_H = 2.0;
+
+  // 起点下半截（沿首段切线反向延伸，近端扩 OVERLAP 与中段首 stamp 重叠）
   const p0 = path[0], p1 = path[1];
   const startSegLen = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
-  const startTanX = (p1.x - p0.x) / startSegLen, startTanY = (p1.y - p0.y) / startSegLen;
   const startTan = Math.atan2(p1.y - p0.y, p1.x - p0.x);
   ctx.save();
-  ctx.translate(p0.x + startTanX * OVERLAP, p0.y + startTanY * OVERLAP);
+  ctx.translate(p0.x, p0.y);
   ctx.rotate(startTan + Math.PI / 2);
-  // 沿 local +Y 方向（远离 path[1]）画下半截，多画 OVERLAP 高度覆盖近端
   ctx.drawImage(sliced.canvas, 0, cutY, W, bottomExtent, -halfW, -OVERLAP, Wd, botD + OVERLAP);
   ctx.restore();
 
-  // 中段：每相邻两点画一个梯形 quad（= 2 个 affine 三角形），沿 segment 方向各扩 OVERLAP
-  // 源：纯 1px 中行的独立 midRow canvas，整个 (0,0)-(W,1) → dest 梯形（已扩展）
-  // 映射：+perp 端 ↔ midRow x=0；-perp 端 ↔ midRow x=W
+  // 中段：密集 stamp brush —— 沿 path 每 STAMP_STEP 一个 W × STAMP_H stamp
+  // taper 通过 scale 衰减来收尖（在 path 后段 stamp 时 stamp 宽度逐步收缩）
+  let totalLen = 0;
+  const segLens = new Array(path.length - 1);
+  for (let i = 0; i < path.length - 1; i++) {
+    segLens[i] = Math.hypot(path[i + 1].x - path[i].x, path[i + 1].y - path[i].y);
+    totalLen += segLens[i];
+  }
+  const taperStart = taper ? totalLen * 0.75 : Infinity;
+  const taperRange = taper ? totalLen - taperStart : 1;
+
+  let walked = 0;
   for (let i = 0; i < path.length - 1; i++) {
     const a = path[i], b = path[i + 1];
-    const na = perp[i], nb = perp[i + 1];
-    const ma = halfW * miter[i], mb = halfW * miter[i + 1];
+    const segLen = segLens[i];
+    if (segLen < 0.001) continue;
+    const segUnitX = (b.x - a.x) / segLen;
+    const segUnitY = (b.y - a.y) / segLen;
+    const segAngle = Math.atan2(b.y - a.y, b.x - a.x);
 
-    // 沿 segment 方向各扩 OVERLAP 像素，吸收相邻段 clip 栅格化的 1px 误差
-    const segDx = b.x - a.x, segDy = b.y - a.y;
-    const segLen = Math.hypot(segDx, segDy) || 1;
-    const sux = segDx / segLen * OVERLAP, suy = segDy / segLen * OVERLAP;
-    const axE = a.x - sux, ayE = a.y - suy;
-    const bxE = b.x + sux, byE = b.y + suy;
-
-    const aLx = axE + na.x * ma, aLy = ayE + na.y * ma;
-    const aRx = axE - na.x * ma, aRy = ayE - na.y * ma;
-    const bLx = bxE + nb.x * mb, bLy = byE + nb.y * mb;
-    const bRx = bxE - nb.x * mb, bRy = byE - nb.y * mb;
-
-    // T1: midRow (0,0)-(W,0)-(W,1) → dest aL-aR-bR
-    drawAffineTri(ctx, sliced.midRow,
-      0, 0, W, 0, W, 1,
-      aLx, aLy, aRx, aRy, bRx, bRy);
-    // T2: midRow (0,0)-(W,1)-(0,1) → dest aL-bR-bL
-    drawAffineTri(ctx, sliced.midRow,
-      0, 0, W, 1, 0, 1,
-      aLx, aLy, bRx, bRy, bLx, bLy);
+    // 段内 stamp 起点：让总弧长落在 STAMP_STEP 整数倍上，保证段间 stamp 不双盖
+    const startS = (Math.ceil(walked / STAMP_STEP) * STAMP_STEP) - walked;
+    for (let s = startS; s < segLen; s += STAMP_STEP) {
+      // taper：当总弧长进入 taperStart 后，逐步缩 stamp 宽度
+      let stampWd = Wd, stampHalfW = halfW;
+      if (taper) {
+        const arcPos = walked + s;
+        if (arcPos > taperStart) {
+          const t = (arcPos - taperStart) / taperRange;
+          const factor = 1 - t * t * (3 - 2 * t);  // smoothstep 1 → 0
+          stampWd = Wd * factor;
+          stampHalfW = stampWd / 2;
+          if (stampWd < 0.5) continue;
+        }
+      }
+      const x = a.x + segUnitX * s;
+      const y = a.y + segUnitY * s;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(segAngle + Math.PI / 2);
+      ctx.drawImage(sliced.midRow, 0, 0, W, 1, -stampHalfW, -STAMP_H / 2, stampWd, STAMP_H);
+      ctx.restore();
+    }
+    walked += segLen;
   }
 
-  // 终点上半截（沿末段切线方向；近端沿 -tan 扩 OVERLAP 与最后一段重叠）
-  // 收尖模式下不画终点 stamp —— 让最末 quad 自然收缩到 0 形成笔锋
+  // 段间 round-join 补丁：急弯处外侧楔形 gap 用平分角方向额外 stamp 填掉
+  // stamp 高度 = Wd · |tan(Δθ/2)|，外侧扇形空白正好被它覆盖
+  for (let i = 1; i < path.length - 1; i++) {
+    const prev = path[i - 1], cur = path[i], next = path[i + 1];
+    const tanIn = Math.atan2(cur.y - prev.y, cur.x - prev.x);
+    const tanOut = Math.atan2(next.y - cur.y, next.x - cur.x);
+    const bx = Math.cos(tanIn) + Math.cos(tanOut);
+    const by = Math.sin(tanIn) + Math.sin(tanOut);
+    if (Math.hypot(bx, by) < 0.01) continue;
+    let dAng = tanOut - tanIn;
+    while (dAng > Math.PI) dAng -= 2 * Math.PI;
+    while (dAng < -Math.PI) dAng += 2 * Math.PI;
+    if (Math.abs(dAng) < 0.04) continue;
+    const stampH = Math.max(STAMP_H, Wd * Math.tan(Math.abs(dAng) / 2) + 1);
+    const bisectAng = Math.atan2(by, bx);
+    ctx.save();
+    ctx.translate(cur.x, cur.y);
+    ctx.rotate(bisectAng + Math.PI / 2);
+    ctx.drawImage(sliced.midRow, 0, 0, W, 1, -halfW, -stampH / 2, Wd, stampH);
+    ctx.restore();
+  }
+
+  // 终点上半截（taper 时跳过 —— 让 stamp 自然衰减到 0 形成笔锋）
   if (!taper) {
     const n = path.length;
     const pm = path[n - 2], pn = path[n - 1];
-    const endSegLen = Math.hypot(pn.x - pm.x, pn.y - pm.y) || 1;
-    const endTanX = (pn.x - pm.x) / endSegLen, endTanY = (pn.y - pm.y) / endSegLen;
     const endTan = Math.atan2(pn.y - pm.y, pn.x - pm.x);
     ctx.save();
-    ctx.translate(pn.x - endTanX * OVERLAP, pn.y - endTanY * OVERLAP);
+    ctx.translate(pn.x, pn.y);
     ctx.rotate(endTan + Math.PI / 2);
     ctx.drawImage(sliced.canvas, 0, 0, W, topExtent, -halfW, -topD, Wd, topD + OVERLAP);
     ctx.restore();
