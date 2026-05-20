@@ -258,6 +258,7 @@ label.check input { margin: 0; }
         <input type="range" id="brushHue" min="-180" max="180" value="0" step="1">
         <span class="val" id="brushHueVal">0°</span>
       </div>
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="brushTaper"> 末端收尖（笔锋感）</label>
       <div class="hint">每一笔记录画时的属性。改滑杆后再画就是新设定。</div>
     </div>
 
@@ -330,6 +331,7 @@ const state = {
   brushAlpha: 1.0,
   brushFeather: 0,
   brushHue: 0,
+  brushTaper: false,        // 末端收尖（笔锋感）
 
   // 画布 & 背景
   bgTransparent: true,
@@ -776,7 +778,8 @@ function drawAffineTri(ctx, src,
 
 // 曲线模式：相邻两点之间画「梯形 quad（= 2 个 affine 三角形）」
 // 相邻段共享 path[i] ± perp[i] 端点 → 几何上严丝合缝、无 alpha 叠加缝
-function drawCurvedStretch(ctx, sliced, path, scale = 1) {
+// taper = true 时末段平滑收尖到 0，形成笔锋
+function drawCurvedStretch(ctx, sliced, path, scale = 1, taper = false) {
   if (path.length < 1) return;
   if (path.length === 1) {
     drawStretchedShape(ctx, sliced, path[0], path[0], scale);
@@ -826,6 +829,18 @@ function drawCurvedStretch(ctx, sliced, path, scale = 1) {
     miter[i] = ms;
   }
 
+  // 末端收尖：把最末 taperLen 段的 miter 缩到 0（smoothstep 曲线）
+  if (taper && path.length > 4) {
+    const taperLen = Math.min(16, Math.max(4, Math.floor(path.length / 4)));
+    for (let k = 1; k <= taperLen; k++) {
+      const idx = path.length - 1 - taperLen + k;
+      if (idx < 0 || idx >= path.length) continue;
+      const t = k / taperLen;          // 0 → 1
+      const factor = 1 - t * t * (3 - 2 * t);  // smoothstep（1 → 0）
+      miter[idx] *= factor;
+    }
+  }
+
   // 关键：每段沿 path 方向各扩 0.75 px，让相邻段 clip 在公共边上 1.5 px 重叠，
   // 吃掉 1 px 栅格化误差 → 段间无缝。上下半截也同样扩，与首/末段重叠。
   const OVERLAP = 0.75;
@@ -873,17 +888,19 @@ function drawCurvedStretch(ctx, sliced, path, scale = 1) {
   }
 
   // 终点上半截（沿末段切线方向；近端沿 -tan 扩 OVERLAP 与最后一段重叠）
-  const n = path.length;
-  const pm = path[n - 2], pn = path[n - 1];
-  const endSegLen = Math.hypot(pn.x - pm.x, pn.y - pm.y) || 1;
-  const endTanX = (pn.x - pm.x) / endSegLen, endTanY = (pn.y - pm.y) / endSegLen;
-  const endTan = Math.atan2(pn.y - pm.y, pn.x - pm.x);
-  ctx.save();
-  ctx.translate(pn.x - endTanX * OVERLAP, pn.y - endTanY * OVERLAP);
-  ctx.rotate(endTan + Math.PI / 2);
-  // 沿 local -Y 方向（远离 path[n-2]）画上半截，近端多画 OVERLAP 高度覆盖远端
-  ctx.drawImage(sliced.canvas, 0, 0, W, topExtent, -halfW, -topD, Wd, topD + OVERLAP);
-  ctx.restore();
+  // 收尖模式下不画终点 stamp —— 让最末 quad 自然收缩到 0 形成笔锋
+  if (!taper) {
+    const n = path.length;
+    const pm = path[n - 2], pn = path[n - 1];
+    const endSegLen = Math.hypot(pn.x - pm.x, pn.y - pm.y) || 1;
+    const endTanX = (pn.x - pm.x) / endSegLen, endTanY = (pn.y - pm.y) / endSegLen;
+    const endTan = Math.atan2(pn.y - pm.y, pn.x - pm.x);
+    ctx.save();
+    ctx.translate(pn.x - endTanX * OVERLAP, pn.y - endTanY * OVERLAP);
+    ctx.rotate(endTan + Math.PI / 2);
+    ctx.drawImage(sliced.canvas, 0, 0, W, topExtent, -halfW, -topD, Wd, topD + OVERLAP);
+    ctx.restore();
+  }
 }
 
 function drawStroke(ctx, stroke) {
@@ -904,7 +921,7 @@ function drawStroke(ctx, stroke) {
 
   const drawGeom = (targetCtx) => {
     if (stroke.curved && stroke.path.length >= 2) {
-      drawCurvedStretch(targetCtx, sliced, stroke.path, sc);
+      drawCurvedStretch(targetCtx, sliced, stroke.path, sc, stroke.taper);
     } else if (stroke.path.length >= 1) {
       const anchor = stroke.path[0];
       const target = stroke.path[stroke.path.length - 1] || anchor;
@@ -982,6 +999,7 @@ mainCanvas.addEventListener('mousedown', (e) => {
     alpha: state.brushAlpha,
     feather: state.brushFeather,
     hue: state.brushHue,
+    taper: state.brushTaper,
   };
   state.redoStack = [];
   paint();
@@ -1087,6 +1105,10 @@ hueSlider.addEventListener('input', () => {
   const v = parseInt(hueSlider.value);
   state.brushHue = v;
   hueVal.textContent = v + '°';
+});
+
+$('brushTaper').addEventListener('change', () => {
+  state.brushTaper = $('brushTaper').checked;
 });
 
 // 画布尺寸

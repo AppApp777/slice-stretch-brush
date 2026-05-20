@@ -53,20 +53,39 @@ A-切片拉伸笔刷/
 - 下半截贴 local Y ∈ [0, botD]、中段（1px 行）拉伸到 [-stretchLen, 0]、上半截贴 [-stretchLen - topD, -stretchLen]。
 - `scale` 缩放横截面 + 上下半截高度；中段长度不缩放（始终等于鼠标拖距）。
 
-### 曲线拉伸 `drawCurvedStretch(ctx, sliced, path, scale)` —— v0.3 起用 affine quad strip
+### 曲线拉伸 `drawCurvedStretch(ctx, sliced, path, scale, taper)` —— v0.4
 
 - 路径每 1.5 px 采样一点。
 - 每个 path 点算「联结法线」+ miter 长度（内部点 = 相邻两段法线之和归一化；ms = 1/|cos(半夹角)|，capped 4）。
 - 起点画下半截（沿首段切线），终点画上半截（沿末段切线）。
-- 中段：相邻两点画一个**梯形 quad**（= 2 个 affine 三角形，`drawAffineTri` 助手），源 = 单独抽出的 `sliced.midRow`（W×1 canvas）。相邻段共享 `path[i] ± perp[i]` 端点 → **几何上严丝合缝，没有 gap，没有 alpha 叠加缝**。
-- 历史教训：v0.2 的「每段矩形 stamp + 平分角补丁」在端点用不同方向短边相接，源 1px 中行两端列 alpha < 100% → 公共边叠加只到 75%，肉眼看仍是稀缝。v0.3 彻底废弃该方案，详见 BUGS.md。
+- 中段：相邻两点画一个**梯形 quad**（= 2 个 affine 三角形，`drawAffineTri` 助手），源 = 独立抽出的 `sliced.midRow`（W×1 canvas）。
+- **OVERLAP 关键**：每段沿 segment 方向各扩 0.75 px → 相邻段 1.5 px 重叠 → 吃掉 1-bit clip 栅格化的浮点四舍五入误差。下半截/上半截 stamp 同样扩 OVERLAP 与首/末段重叠。
+- `taper = true` 时末端 smoothstep 衰减最末 N 段 miter 到 0，并跳过终点 stamp → 形成笔锋。
+- 历史教训：v0.3 用 affine quad 解决了 alpha 叠加缝，但 clip 1-bit 栅格化仍露 1px 白缝 → v0.4 加 OVERLAP 彻底封住。
 
-### 笔触属性（alpha / feather / hue）
+### 多源图笔刷库
 
-- 每一笔记录 4 个属性：scale / alpha / feather / hue。
-- 无 filter 时直接画到目标 ctx。
-- 有 filter（feather > 0 / hue ≠ 0 / alpha < 1）：先画到全局 `offscreenCanvas`（无 filter），再用 `ctx.filter = 'blur(...) hue-rotate(...)'` + `globalAlpha` 一次性 `drawImage(offscreen)` 到目标——**避免每个 affine 三角形都触发 GPU filter**。
-- 撤销/重做共用 `state.redoStack`；新笔画落定清空它。
+- `state.brushes = [{ id, name, src, sliced, cutPoints }]`；每张图独立记忆切割线。
+- `state.activeBrushId` + state.srcImage/sliced/cutPoints 作快速指代。
+- stroke 记录 `brushId`，`drawStroke` 用 brushId 查对应 brush 的 sliced——切换图后历史笔画仍正确显示。
+
+### 笔触属性（每笔独立记录）
+
+- scale / alpha / feather / hue / taper。
+- 无 filter 直接画到 ctx；有 filter（feather>0 / hue≠0 / alpha<1）先画到 `offscreenCanvas` 再一次性 filter 复制 → **避免每个 affine 三角形都触发 GPU filter**。
+- 撤销/重做共用 `state.redoStack`；新笔画落定清空。
+
+### 自动持久化
+
+- key: `slice-stretch-brush:v1`
+- 保存：brushes（图片 dataURL + 切线点）、strokes、活跃 brush、画布尺寸、背景设置。
+- 在 brush 增删 / 切线定义 / 笔画完成 / undo/redo / clear / 背景或尺寸改变时调 `persist()`。
+- 启动调 `tryRestore()` 异步还原（用 dataURL 重建 Image）。`restoring` flag 防止 restore 过程中触发 persist 循环。
+
+### 画布 & 背景
+
+- `resizeCanvases(w, h)` 同步改 mainCanvas / committedCanvas / offscreenCanvas 三个 framebuffer + rebuild。
+- `state.bgTransparent` / `bgColor`：paint() 和导出时根据这两个值决定底色。
 
 ## 不要做的事
 
