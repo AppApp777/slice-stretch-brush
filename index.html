@@ -4,41 +4,198 @@
 <meta charset="UTF-8">
 <title>切片拉伸笔刷 · Slice-Stretch Brush</title>
 <style>
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #fafbfc;
+  --border: #e4e6eb;
+  --border-strong: #d0d3d9;
+  --text: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #9b9b9f;
+  --accent: #0a84ff;
+  --accent-dark: #0066cc;
+  --accent-soft: rgba(10,132,255,0.10);
+  --ok: #34c759;
+  --warn: #ff9f0a;
+  --shadow-card: 0 1px 2px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.06);
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f5f5; padding: 16px; color: #222; }
-#app { display: flex; gap: 16px; max-width: 1500px; margin: 0 auto; }
-#sidebar { width: 300px; background: white; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); flex-shrink: 0; }
-#main { flex: 1; background: white; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-h1 { font-size: 18px; margin-bottom: 12px; }
-.section { margin-bottom: 18px; }
-.section-title { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 8px; letter-spacing: 0.5px; }
-button { display: block; width: 100%; padding: 8px 12px; margin: 4px 0; border: 1px solid #ccc; background: white; cursor: pointer; border-radius: 4px; font-size: 13px; transition: all 0.15s; }
-button:hover { background: #f0f0f0; border-color: #999; }
-button:active { background: #e0e0e0; }
-button.primary { background: #4a90e2; color: white; border-color: #4a90e2; }
-button.primary:hover { background: #357abd; }
-button.ghost { background: transparent; }
-.hint { font-size: 11px; color: #888; margin: 6px 0; line-height: 1.6; }
-#sourceCanvas { display: block; width: 100%; height: auto; cursor: crosshair; border: 1px dashed #ccc; background: #fff; margin-top: 4px; }
-#mainCanvas { display: block; width: 100%; cursor: crosshair; border: 1px solid #ddd; background: #fff; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  padding: 20px;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01" on, "kern" on;
+}
+#app { display: flex; gap: 20px; max-width: 1600px; margin: 0 auto; align-items: flex-start; }
+#sidebar {
+  width: 320px;
+  background: var(--surface);
+  padding: 22px 20px 24px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  flex-shrink: 0;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+#sidebar::-webkit-scrollbar { width: 6px; }
+#sidebar::-webkit-scrollbar-thumb { background: #d0d3d9; border-radius: 3px; }
+#main { flex: 1; background: var(--surface); padding: 18px; border-radius: var(--radius-lg); box-shadow: var(--shadow-card); }
+h1 { font-size: 19px; font-weight: 600; margin-bottom: 18px; letter-spacing: -0.2px; }
+.section { margin-bottom: 22px; }
+.section:last-child { margin-bottom: 0; }
+.section-title {
+  font-size: 11px; font-weight: 600; color: var(--text-2);
+  margin-bottom: 10px; letter-spacing: 0.6px; text-transform: uppercase;
+}
+button {
+  display: block; width: 100%;
+  padding: 9px 14px; margin: 5px 0;
+  border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--text);
+  cursor: pointer; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 500;
+  font-family: inherit;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.06s ease;
+}
+button:hover { background: var(--surface-2); border-color: var(--text-3); }
+button:active { transform: scale(0.985); background: #eef0f3; }
+button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+button.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+button.ghost { background: transparent; border-color: var(--border); }
+button.ghost:hover { background: var(--surface-2); }
+.hint { font-size: 11px; color: var(--text-3); margin: 6px 0; line-height: 1.65; }
+#sourceCanvas {
+  display: block; width: 100%; height: auto;
+  cursor: crosshair;
+  border: 1px solid var(--border);
+  background: #fff; margin-top: 6px;
+  border-radius: var(--radius-sm);
+}
+#mainCanvas {
+  display: block; width: 100%;
+  cursor: crosshair;
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: var(--radius);
+}
 #fileInput { display: none; }
-.status { padding: 6px 10px; border-radius: 4px; font-size: 12px; margin: 6px 0; line-height: 1.4; }
-.status.warn { background: #fff3cd; border: 1px solid #ffd966; color: #663; }
-.status.ok { background: #d4edda; border: 1px solid #4caf50; color: #2a4d2a; }
-.status.info { background: #cfe2ff; border: 1px solid #4a90e2; color: #1c4a80; }
-.kbd { display: inline-block; background: #f0f0f0; border: 1px solid #ccc; border-radius: 3px; padding: 1px 6px; font-family: monospace; font-size: 11px; }
+.status {
+  padding: 7px 11px; border-radius: var(--radius-sm);
+  font-size: 12px; margin: 8px 0 4px; line-height: 1.5;
+  border: 1px solid transparent;
+}
+.status.warn { background: #fff7e6; border-color: #ffe2a8; color: #8a5800; }
+.status.ok   { background: #e8f7ec; border-color: #b9e2c4; color: #1a6c2e; }
+.status.info { background: #e8f1ff; border-color: #bcd6ff; color: #0a4ea8; }
+.kbd {
+  display: inline-block; background: #f0f1f4;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px; padding: 1px 6px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 11px; color: var(--text-2);
+}
 .row { display: flex; gap: 6px; }
-.row > button { margin: 4px 0; }
-.mode-toggle { display: flex; gap: 4px; }
-.mode-toggle button { font-size: 12px; padding: 6px 8px; }
-.mode-toggle button.active { background: #4a90e2; color: white; border-color: #4a90e2; }
-#sliceInfo { font-size: 11px; color: #666; padding: 4px 0; font-family: monospace; }
-.slider-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-.slider-row input[type=range] { flex: 1; }
-.slider-row .val { font-family: monospace; font-size: 12px; color: #555; min-width: 42px; text-align: right; }
-.slider-row .slabel { font-size: 11px; color: #666; min-width: 36px; }
-.row > button { flex: 1; }
-.kbdhint { background: #fafafa; border: 1px solid #eee; border-radius: 4px; padding: 6px 8px; font-size: 11px; color: #666; line-height: 1.7; }
+.row > button { flex: 1; margin: 5px 0; }
+.mode-toggle { display: flex; gap: 4px; padding: 3px; background: #f0f1f4; border-radius: var(--radius-sm); }
+.mode-toggle button {
+  flex: 1; font-size: 12px; padding: 6px 10px;
+  margin: 0; border: 1px solid transparent; background: transparent;
+  border-radius: 5px; color: var(--text-2);
+}
+.mode-toggle button.active { background: var(--surface); color: var(--text); border-color: var(--border); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+#sliceInfo { font-size: 10.5px; color: var(--text-3); padding: 4px 0; font-family: ui-monospace, monospace; }
+
+/* sliders */
+.slider-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+.slider-row .slabel { font-size: 11px; color: var(--text-2); min-width: 32px; }
+.slider-row .val { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-2); min-width: 42px; text-align: right; }
+input[type=range] {
+  flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+  background: #e4e6eb; border-radius: 2px; outline: none; padding: 0;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: white; border: 1px solid var(--border-strong);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  cursor: pointer; transition: transform 0.1s;
+}
+input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+input[type=range]::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: white; border: 1px solid var(--border-strong);
+  cursor: pointer;
+}
+input[type=number], input[type=text] {
+  font-family: inherit; font-size: 12px;
+  padding: 6px 8px; border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); background: var(--surface);
+  color: var(--text); width: 80px;
+}
+input[type=number]:focus, input[type=text]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+input[type=color] {
+  width: 32px; height: 24px; padding: 0; border: 1px solid var(--border-strong);
+  border-radius: 4px; cursor: pointer; background: transparent;
+}
+input[type=color]:disabled { opacity: 0.4; cursor: not-allowed; }
+label.check { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); cursor: pointer; }
+label.check input { margin: 0; }
+
+/* 图片库 */
+.brush-list {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+  margin-bottom: 10px;
+}
+.brush-item {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  background: var(--surface-2) center / cover no-repeat;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.06s;
+}
+.brush-item:hover { border-color: var(--text-3); }
+.brush-item.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.brush-item:active { transform: scale(0.96); }
+.brush-pending {
+  position: absolute; top: 4px; left: 4px; width: 7px; height: 7px;
+  background: var(--warn); border-radius: 50%;
+  box-shadow: 0 0 0 1.5px white;
+}
+.brush-del {
+  position: absolute; top: -7px; right: -7px;
+  width: 18px; height: 18px; min-width: unset;
+  background: #ff3b30; color: white;
+  border: 2px solid white; border-radius: 50%;
+  font-size: 12px; line-height: 1; padding: 0;
+  display: none; cursor: pointer;
+  font-weight: bold;
+}
+.brush-item:hover .brush-del { display: block; }
+.brush-del:hover { background: #d70015; }
+
+/* canvas / 背景 */
+.canvas-size-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.canvas-size-row input { width: 64px; }
+.bg-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+
+/* 快捷键面板 */
+.kbdhint {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px; font-size: 11px;
+  color: var(--text-2); line-height: 1.85;
+}
 .kbdhint .kbd { margin-right: 4px; }
 </style>
 </head>
@@ -49,11 +206,14 @@ button.ghost { background: transparent; }
     <h1>切片拉伸笔刷</h1>
 
     <div class="section">
-      <div class="section-title">1 · 加载图片</div>
-      <button id="btnLoad" class="primary">选择 PNG / JPG</button>
-      <button id="btnSample" class="ghost">用示例苹果</button>
+      <div class="section-title">1 · 图片库</div>
+      <div id="brushList" class="brush-list"></div>
+      <div class="row">
+        <button id="btnLoad" class="primary">+ 加载图片</button>
+        <button id="btnSample" class="ghost">+ 示例苹果</button>
+      </div>
       <input type="file" id="fileInput" accept="image/*">
-      <div class="hint">推荐透明底 PNG。示例苹果可立即试玩。</div>
+      <div class="hint">点缩略图切换，悬停显示删除。每张图独立记忆切割线。</div>
     </div>
 
     <div class="section">
@@ -112,6 +272,21 @@ button.ghost { background: transparent; }
     </div>
 
     <div class="section">
+      <div class="section-title">画布 & 背景</div>
+      <div class="canvas-size-row">
+        <input type="number" id="canvasW" min="200" max="4096" value="1080">
+        <span>×</span>
+        <input type="number" id="canvasH" min="200" max="4096" value="720">
+        <button id="btnResize" style="margin: 0; padding: 5px 10px; width: auto; font-size: 11px;">应用</button>
+      </div>
+      <div class="bg-row">
+        <span class="slabel">底色</span>
+        <input type="color" id="bgColor" value="#ffffff" disabled>
+        <label class="check"><input type="checkbox" id="bgTransparent" checked> 透明（棋盘）</label>
+      </div>
+    </div>
+
+    <div class="section">
       <div class="section-title">快捷键</div>
       <div class="kbdhint">
         <span class="kbd">Shift</span> 切曲线<br>
@@ -134,19 +309,31 @@ button.ghost { background: transparent; }
 // 状态
 // ============================================================
 const state = {
-  srcImage: null,           // HTMLImageElement / HTMLCanvasElement
-  sliced: null,             // { canvas, cutY, width, height, topExtent, bottomExtent, cutMidpoint, cutAngle }
+  // brushes：图片库，每张图独立记忆切割线
+  // { id, name, src (HTMLImageElement|Canvas), sliced, cutPoints }
+  brushes: [],
+  activeBrushId: null,
+
+  // 以下三个是「当前活跃 brush 的快速指代」，便于现有代码读取
+  srcImage: null,
+  sliced: null,
+  cutPoints: [],
+
   uiMode: 'idle',           // 'idle' | 'defineCut' | 'draw'
-  cutPoints: [],            // 在原图坐标中的两个点（拖动中也用它做实时预览）
-  cutDragging: false,       // 切割线是否正在拖动
-  currentStroke: null,      // 正在画的一笔
-  strokes: [],              // 已落定的笔画
-  redoStack: [],            // 重做栈
-  curvedMode: false,        // false=直线 true=曲线
-  brushScale: 1.0,          // 笔触缩放（1.0 = 100%）
-  brushAlpha: 1.0,          // 笔触透明度（0~1）
-  brushFeather: 0,          // 边缘羽化半径（px）
-  brushHue: 0,              // 色相旋转（度）
+  cutDragging: false,
+  currentStroke: null,
+  strokes: [],
+  redoStack: [],
+
+  curvedMode: false,
+  brushScale: 1.0,
+  brushAlpha: 1.0,
+  brushFeather: 0,
+  brushHue: 0,
+
+  // 画布 & 背景
+  bgTransparent: true,
+  bgColor: '#ffffff',
 };
 
 // offscreen canvas：当笔触有 filter / alpha 时，先画到这里再一次性贴到目标 ctx
@@ -212,14 +399,105 @@ $('btnSample').onclick = () => {
   acceptSource(c);
 };
 
-function acceptSource(imgOrCanvas) {
-  state.srcImage = imgOrCanvas;
-  state.sliced = null;
+function acceptSource(imgOrCanvas, name) {
+  const id = 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const brush = {
+    id,
+    name: name || ('图 ' + (state.brushes.length + 1)),
+    src: imgOrCanvas,
+    sliced: null,
+    cutPoints: [],
+  };
+  state.brushes.push(brush);
+  switchBrush(id);
+  state.uiMode = 'defineCut';
   state.cutPoints = [];
-  state.uiMode = 'idle';
+  state.cutDragging = false;
   drawSourcePreview();
-  setStatus('warn', '图片已加载，点击「在原图上拖一条线」定义切割线');
+  renderBrushList();
+  setStatus('info', '在原图上按下并拖动一条线定义切割线');
   sliceInfo.textContent = '';
+  persist();
+}
+
+function switchBrush(id) {
+  const b = state.brushes.find(x => x.id === id);
+  if (!b) return;
+  state.activeBrushId = id;
+  state.srcImage = b.src;
+  state.sliced = b.sliced;
+  state.cutPoints = (b.cutPoints || []).slice();
+  state.uiMode = b.sliced ? 'draw' : 'idle';
+  if (b.sliced) {
+    setStatus('ok', '已切到「' + b.name + '」');
+    sliceInfo.textContent = `cut: (${b.sliced.cutMidpoint.x.toFixed(0)}, ${b.sliced.cutMidpoint.y.toFixed(0)}) · angle: ${(b.sliced.cutAngle * 180 / Math.PI).toFixed(1)}°`;
+  } else {
+    setStatus('warn', '已切到「' + b.name + '」—— 还没定义切割线');
+    sliceInfo.textContent = '';
+  }
+  drawSourcePreview();
+  renderBrushList();
+  rebuildCommitted();
+  paint();
+}
+
+function deleteBrush(id) {
+  if (state.brushes.length <= 1) {
+    setStatus('warn', '至少保留一个 brush');
+    return;
+  }
+  const b = state.brushes.find(x => x.id === id);
+  if (!b) return;
+  if (!confirm('删除「' + b.name + '」？用它画的笔画也会清掉')) return;
+  state.brushes = state.brushes.filter(x => x.id !== id);
+  state.strokes = state.strokes.filter(s => s.brushId !== id);
+  state.redoStack = state.redoStack.filter(s => s.brushId !== id);
+  if (state.activeBrushId === id) {
+    switchBrush(state.brushes[0].id);
+  } else {
+    renderBrushList();
+    rebuildCommitted();
+    paint();
+  }
+  persist();
+}
+
+function renderBrushList() {
+  const list = $('brushList');
+  if (!list) return;
+  list.innerHTML = '';
+  state.brushes.forEach(b => {
+    const item = document.createElement('div');
+    item.className = 'brush-item' + (b.id === state.activeBrushId ? ' active' : '');
+    item.title = b.name + (b.sliced ? '' : '（未定义切线）');
+    item.style.backgroundImage = 'url(' + brushThumbnail(b.src) + ')';
+    item.onclick = () => switchBrush(b.id);
+    if (!b.sliced) {
+      const dot = document.createElement('div');
+      dot.className = 'brush-pending';
+      item.appendChild(dot);
+    }
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'brush-del';
+    del.textContent = '×';
+    del.title = '删除';
+    del.onclick = (e) => { e.stopPropagation(); deleteBrush(b.id); };
+    item.appendChild(del);
+    list.appendChild(item);
+  });
+}
+
+function brushThumbnail(src) {
+  const w = 56, h = 56;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  const iw = src.width, ih = src.height;
+  const s = Math.min(w / iw, h / ih);
+  const dw = iw * s, dh = ih * s;
+  ctx.drawImage(src, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  return c.toDataURL();
 }
 
 function generateSampleApple() {
@@ -404,7 +682,15 @@ function prepareSlicedImage() {
     cutAngle: angle,
   };
 
+  // 同步到当前活跃 brush，让切换时可以恢复
+  const brush = state.brushes.find(x => x.id === state.activeBrushId);
+  if (brush) {
+    brush.sliced = state.sliced;
+    brush.cutPoints = state.cutPoints.slice();
+  }
+  renderBrushList();
   sliceInfo.textContent = `cut: (${mx.toFixed(0)}, ${my.toFixed(0)}) · angle: ${(angle * 180 / Math.PI).toFixed(1)}°`;
+  persist();
 }
 
 // ============================================================
@@ -601,7 +887,15 @@ function drawCurvedStretch(ctx, sliced, path, scale = 1) {
 }
 
 function drawStroke(ctx, stroke) {
-  if (!state.sliced) return;
+  // 找 stroke 用的那个 brush 的 sliced（不是 state.sliced，因为 active brush 可能已切换）
+  let sliced = null;
+  if (stroke.brushId) {
+    const b = state.brushes.find(x => x.id === stroke.brushId);
+    if (b && b.sliced) sliced = b.sliced;
+  }
+  if (!sliced) sliced = state.sliced;
+  if (!sliced) return;
+
   const sc = stroke.scale || 1;
   const alpha = stroke.alpha !== undefined ? stroke.alpha : 1;
   const feather = stroke.feather || 0;
@@ -610,11 +904,11 @@ function drawStroke(ctx, stroke) {
 
   const drawGeom = (targetCtx) => {
     if (stroke.curved && stroke.path.length >= 2) {
-      drawCurvedStretch(targetCtx, state.sliced, stroke.path, sc);
+      drawCurvedStretch(targetCtx, sliced, stroke.path, sc);
     } else if (stroke.path.length >= 1) {
       const anchor = stroke.path[0];
       const target = stroke.path[stroke.path.length - 1] || anchor;
-      drawStretchedShape(targetCtx, state.sliced, anchor, target, sc);
+      drawStretchedShape(targetCtx, sliced, anchor, target, sc);
     }
   };
 
@@ -647,9 +941,24 @@ function rebuildCommitted() {
 
 function paint() {
   mainCtx.clearRect(0, 0, mainCanvas.width, mainCanvas.height);
-  drawCheckerboard(mainCtx, mainCanvas.width, mainCanvas.height, 16);
+  if (state.bgTransparent) {
+    drawCheckerboard(mainCtx, mainCanvas.width, mainCanvas.height, 16);
+  } else {
+    mainCtx.fillStyle = state.bgColor;
+    mainCtx.fillRect(0, 0, mainCanvas.width, mainCanvas.height);
+  }
   mainCtx.drawImage(committedCanvas, 0, 0);
   if (state.currentStroke) drawStroke(mainCtx, state.currentStroke);
+}
+
+function resizeCanvases(w, h) {
+  w = Math.max(200, Math.min(4096, w | 0));
+  h = Math.max(200, Math.min(4096, h | 0));
+  mainCanvas.width = w; mainCanvas.height = h;
+  committedCanvas.width = w; committedCanvas.height = h;
+  offscreenCanvas.width = w; offscreenCanvas.height = h;
+  rebuildCommitted();
+  paint();
 }
 
 // ============================================================
@@ -666,6 +975,7 @@ mainCanvas.addEventListener('mousedown', (e) => {
   if (!state.sliced) { setStatus('warn', '请先定义切割线'); return; }
   const p = canvasPoint(e);
   state.currentStroke = {
+    brushId: state.activeBrushId,
     path: [p],
     curved: state.curvedMode,
     scale: state.brushScale,
@@ -673,7 +983,6 @@ mainCanvas.addEventListener('mousedown', (e) => {
     feather: state.brushFeather,
     hue: state.brushHue,
   };
-  // 新笔画落定时会清空 redo 栈；按下时也清一次，让"画了就不能 redo 之前的"语义直观
   state.redoStack = [];
   paint();
 });
@@ -697,6 +1006,7 @@ function endStroke() {
   state.currentStroke = null;
   rebuildCommitted();
   paint();
+  persist();
 }
 
 mainCanvas.addEventListener('mouseup', endStroke);
@@ -779,6 +1089,29 @@ hueSlider.addEventListener('input', () => {
   hueVal.textContent = v + '°';
 });
 
+// 画布尺寸
+$('btnResize').onclick = () => {
+  const w = parseInt($('canvasW').value);
+  const h = parseInt($('canvasH').value);
+  if (w >= 200 && h >= 200) {
+    resizeCanvases(w, h);
+    persist();
+  }
+};
+
+// 背景色
+$('bgTransparent').addEventListener('change', () => {
+  state.bgTransparent = $('bgTransparent').checked;
+  $('bgColor').disabled = state.bgTransparent;
+  paint();
+  persist();
+});
+$('bgColor').addEventListener('input', () => {
+  state.bgColor = $('bgColor').value;
+  if (!state.bgTransparent) paint();
+  persist();
+});
+
 function setCurved(v) {
   state.curvedMode = v;
   modeStraightBtn.classList.toggle('active', !v);
@@ -796,6 +1129,7 @@ function undo() {
   state.redoStack.push(s);
   rebuildCommitted();
   paint();
+  persist();
 }
 
 function redo() {
@@ -804,6 +1138,7 @@ function redo() {
   state.strokes.push(s);
   rebuildCommitted();
   paint();
+  persist();
 }
 
 $('btnUndo').onclick = undo;
@@ -816,6 +1151,7 @@ $('btnClear').onclick = () => {
     state.redoStack = [];
     rebuildCommitted();
     paint();
+    persist();
   }
 };
 
@@ -825,7 +1161,11 @@ $('btnExport').onclick = () => {
   out.width = mainCanvas.width;
   out.height = mainCanvas.height;
   const outCtx = out.getContext('2d');
-  // 不画棋盘 — 透明背景导出
+  // 背景：透明则不填，否则填指定底色
+  if (!state.bgTransparent) {
+    outCtx.fillStyle = state.bgColor;
+    outCtx.fillRect(0, 0, out.width, out.height);
+  }
   state.strokes.forEach(s => drawStroke(outCtx, s));
   const link = document.createElement('a');
   link.download = '切片拉伸-' + Date.now() + '.png';
@@ -842,10 +1182,132 @@ function setStatus(kind, text) {
 }
 
 // ============================================================
+// localStorage 自动持久化
+// ============================================================
+const STORAGE_KEY = 'slice-stretch-brush:v1';
+let restoring = false;
+
+function srcToDataURL(src) {
+  if (src instanceof HTMLCanvasElement) return src.toDataURL();
+  // HTMLImageElement
+  const c = document.createElement('canvas');
+  c.width = src.naturalWidth || src.width;
+  c.height = src.naturalHeight || src.height;
+  c.getContext('2d').drawImage(src, 0, 0);
+  return c.toDataURL();
+}
+
+function persist() {
+  if (restoring) return;
+  try {
+    const data = {
+      brushes: state.brushes.map(b => ({
+        id: b.id, name: b.name,
+        cutPoints: b.cutPoints || [],
+        srcData: srcToDataURL(b.src),
+      })),
+      activeBrushId: state.activeBrushId,
+      strokes: state.strokes,
+      bgTransparent: state.bgTransparent,
+      bgColor: state.bgColor,
+      canvasW: mainCanvas.width,
+      canvasH: mainCanvas.height,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    // 配额超限就放弃存
+  }
+}
+
+function loadImageFromDataURL(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+async function tryRestore() {
+  let data;
+  try {
+    const json = localStorage.getItem(STORAGE_KEY);
+    if (!json) return false;
+    data = JSON.parse(json);
+  } catch { return false; }
+  if (!data || !Array.isArray(data.brushes) || data.brushes.length === 0) return false;
+
+  restoring = true;
+  try {
+    // 还原 brushes
+    for (const b of data.brushes) {
+      const img = await loadImageFromDataURL(b.srcData);
+      const brush = { id: b.id, name: b.name, src: img, sliced: null, cutPoints: b.cutPoints || [] };
+      state.brushes.push(brush);
+    }
+
+    // 画布尺寸先恢复
+    if (data.canvasW && data.canvasH) {
+      mainCanvas.width = data.canvasW; mainCanvas.height = data.canvasH;
+      committedCanvas.width = data.canvasW; committedCanvas.height = data.canvasH;
+      offscreenCanvas.width = data.canvasW; offscreenCanvas.height = data.canvasH;
+      const wInp = $('canvasW'), hInp = $('canvasH');
+      if (wInp) wInp.value = data.canvasW;
+      if (hInp) hInp.value = data.canvasH;
+    }
+
+    // 背景
+    state.bgTransparent = data.bgTransparent !== false;
+    state.bgColor = data.bgColor || '#ffffff';
+    const bt = $('bgTransparent'), bc = $('bgColor');
+    if (bt) bt.checked = state.bgTransparent;
+    if (bc) { bc.value = state.bgColor; bc.disabled = state.bgTransparent; }
+
+    // 重建每个 brush 的 sliced
+    for (const b of state.brushes) {
+      if (b.cutPoints && b.cutPoints.length === 2) {
+        state.srcImage = b.src;
+        state.cutPoints = b.cutPoints.slice();
+        state.activeBrushId = b.id;
+        prepareSlicedImage();
+      }
+    }
+
+    // 笔画
+    state.strokes = Array.isArray(data.strokes) ? data.strokes : [];
+
+    // 切到 active brush
+    const activeId = data.activeBrushId && state.brushes.find(x => x.id === data.activeBrushId)
+      ? data.activeBrushId
+      : state.brushes[0].id;
+    state.activeBrushId = activeId;
+    const ab = state.brushes.find(x => x.id === activeId);
+    if (ab) {
+      state.srcImage = ab.src;
+      state.sliced = ab.sliced;
+      state.cutPoints = (ab.cutPoints || []).slice();
+      state.uiMode = ab.sliced ? 'draw' : 'idle';
+    }
+
+    renderBrushList();
+    drawSourcePreview();
+    rebuildCommitted();
+    paint();
+    if (state.brushes.length > 0) {
+      setStatus('ok', '已恢复上次会话（' + state.brushes.length + ' 张图，' + state.strokes.length + ' 笔）');
+    }
+    return true;
+  } finally {
+    restoring = false;
+  }
+}
+
+// ============================================================
 // 启动
 // ============================================================
 drawCheckerboard(sourceCtx, sourceCanvas.width, sourceCanvas.height, 8);
 paint();
+tryRestore();
 </script>
 </body>
 </html>
