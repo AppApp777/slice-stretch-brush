@@ -53,15 +53,17 @@ A-切片拉伸笔刷/
 - 下半截贴 local Y ∈ [0, botD]、中段（1px 行）拉伸到 [-stretchLen, 0]、上半截贴 [-stretchLen - topD, -stretchLen]。
 - `scale` 缩放横截面 + 上下半截高度；中段长度不缩放（始终等于鼠标拖距）。
 
-### 曲线拉伸 `drawCurvedStretch(ctx, sliced, path, scale, taper)` —— v0.4
+### 曲线拉伸 `drawCurvedStretch(ctx, sliced, path, scale, taper)` —— v0.5 stamp brush
 
 - 路径每 1.5 px 采样一点。
-- 每个 path 点算「联结法线」+ miter 长度（内部点 = 相邻两段法线之和归一化；ms = 1/|cos(半夹角)|，capped 4）。
-- 起点画下半截（沿首段切线），终点画上半截（沿末段切线）。
-- 中段：相邻两点画一个**梯形 quad**（= 2 个 affine 三角形，`drawAffineTri` 助手），源 = 独立抽出的 `sliced.midRow`（W×1 canvas）。
-- **OVERLAP 关键**：每段沿 segment 方向各扩 0.75 px → 相邻段 1.5 px 重叠 → 吃掉 1-bit clip 栅格化的浮点四舍五入误差。下半截/上半截 stamp 同样扩 OVERLAP 与首/末段重叠。
-- `taper = true` 时末端 smoothstep 衰减最末 N 段 miter 到 0，并跳过终点 stamp → 形成笔锋。
-- 历史教训：v0.3 用 affine quad 解决了 alpha 叠加缝，但 clip 1-bit 栅格化仍露 1px 白缝 → v0.4 加 OVERLAP 彻底封住。
+- **算法**：沿 path 每 `STAMP_STEP = 0.4 px` 一个矩形 stamp，`drawImage(sliced.midRow, ..., -halfW, -STAMP_H/2, Wd, STAMP_H=2.0) + ctx.rotate(切线方向)`。相邻 stamp 沿切线重叠 1.6 px → 完全密铺。
+- **关键 invariant**：完全不用 `ctx.clip()` 也不用 `ctx.transform()` affine 三角形 → 没有任何 1-bit 栅格化边界 → **绝对无缝**。
+- 段内 stamp 起点用累计弧长 `walked` 对齐 STAMP_STEP 整数倍，保证段间 stamp 不双盖也不漏。
+- 急弯外侧楔形 gap 保留 round-join 补丁：每个内部 path 点画一个平分角方向 stamp，高度 = `Wd · |tan(Δθ/2)|`。
+- 起点/终点用 `sliced.canvas` 完整下/上半截 stamp（带 OVERLAP 0.75 与中段 stamp 重叠）。
+- `taper = true` 时不画终点 stamp；当累计弧长达 75% 后 stamp 宽度按 smoothstep 衰减到 0 → 自然笔锋。
+- **历史教训**：v0.2 矩形 stamp + 平分角补丁有 alpha 叠加缝；v0.3 改 affine quad 解决 alpha 但暴露 clip 栅格化缝；v0.4 加 OVERLAP 扩 dest 边界没用——clip path 本身是 1-bit；v0.5 干脆抛弃 clip，回到 stamp brush 但用密集 stamp 密铺。
+- `drawAffineTri` 函数已不再被曲线渲染使用，保留作工具（未来可能用）。
 
 ### 多源图笔刷库
 

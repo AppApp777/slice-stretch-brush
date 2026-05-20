@@ -1,6 +1,6 @@
 # 切片拉伸笔刷 · progress
 
-## 当前状态：v0.4（功能完整 · 苹果级 UI）
+## 当前状态：v0.5（stamp brush · 真无缝）
 
 **在线试玩**：https://appapp777.github.io/slice-stretch-brush/
 **Repo**：https://github.com/AppApp777/slice-stretch-brush（公开）
@@ -9,11 +9,11 @@
 
 ## v0.4 总览
 
-### 渲染稳定性（核心）
-- 曲线渲染：affine quad strip + **段间 0.75 px overlap**，吃掉 1-bit clip 栅格化误差 → 不再有「白色细缝」
-- 直线渲染：下半截/中段/上半截 3 段间 OVERLAP 同步，同样消缝
-- 1px 中行抽到独立 `midRow` canvas，affine 采样不污染相邻行
-- miter join（capped 4 倍）防尖角刺穿
+### 渲染稳定性（核心 · v0.5 大改）
+- 曲线渲染：抛弃 `ctx.clip() + affine triangle`，改 **stamp brush**——沿 path 每 0.4 px 一个 W × 2 px 矩形 stamp，drawImage + rotate，相邻 stamp 重叠 1.6 px 密铺。**没有 clip 没有 affine 边界 → 没有任何 1-bit 栅格化误差 → 绝对无缝**
+- 急弯外侧 round-join 补丁 stamp：高度 = Wd · |tan(Δθ/2)| 兜底
+- 直线渲染：3 段间 0.75 px OVERLAP（直线模式缝问题轻微，保留 OVERLAP 修法即可）
+- 1px 中行抽到独立 `midRow` canvas，stamp 采样不污染相邻行
 
 ### 多源图笔刷库
 - `state.brushes` 数组，每张图独立记忆切割线和 sliced
