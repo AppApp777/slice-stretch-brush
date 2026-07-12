@@ -1,7 +1,7 @@
 # slice-stretch-brush · 项目说明（给 Claude Code 看的）
 
 > 这是一个**独立单文件**前端 demo——把图像切片后拖动拉伸成胶囊 / 沿轨迹弯曲当笔刷。
-> 在 `D:/VIBE CODING/A-切片拉伸笔刷/` 启动 Claude Code 时本文件自动加载。
+> 在 `D:/VIBE CODING/A-slice-brush/` 启动 Claude Code 时本文件自动加载。
 
 ## 一句话定位
 
@@ -16,7 +16,7 @@
 ## 文件结构
 
 ```
-A-切片拉伸笔刷/
+A-slice-brush/
 ├── index.html          # 全部产品代码（HTML+CSS+JS）
 ├── README.md           # 公开站门面（中英，主页可见）
 ├── LICENSE             # MIT
