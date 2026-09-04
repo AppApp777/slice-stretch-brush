@@ -1,7 +1,7 @@
 # slice-stretch-brush · 项目说明（给 Claude Code 看的）
 
 > 这是一个**独立单文件**前端 demo——把图像切片后拖动拉伸成胶囊 / 沿轨迹弯曲当笔刷。
-> 在 `D:/VIBE CODING/slice-brush/` 启动 Claude Code 时本文件自动加载。
+> 在 `E:/VIBE CODING/slice-brush/` 启动 Claude Code 时本文件自动加载（`D:/VIBE CODING/` 是指向同一目录的 junction，两种写法等价）。
 
 ## 一句话定位
 
@@ -10,7 +10,7 @@
 ## 当前线上
 
 - **公开试玩**：https://appapp777.github.io/slice-stretch-brush/
-- **Public repo**：https://github.com/AppApp777/slice-stretch-brush
+- **远程仓**：https://github.com/AppApp777/slice-stretch-brush ——建仓时设为公开，**当前是否仍公开、Pages 是否仍在线，2026-08-22 核对时未联网验证**
 - **分支策略**：只用 `main`，push 后 GitHub Pages 自动重建
 
 ## 文件结构
@@ -18,10 +18,10 @@
 ```
 slice-brush/
 ├── index.html          # 全部产品代码（HTML+CSS+JS）
-├── README.md           # 公开站门面（中英，主页可见）
+├── README.md           # 公开站门面（GitHub 仓库主页可见）
 ├── LICENSE             # MIT
 ├── progress.md         # 项目状态（覆盖更新，给用户和 Agent 都看）
-├── BUGS.md             # bug 历史档案（倒序，每修一个加一条）
+├── BUGS.md             # 上半段=已知问题（未修，带行号）／下半段=历史档（已修，倒序）
 ├── CLAUDE.md           # 本文件
 ├── .claude/
 │   └── settings.json   # 项目级 Claude Code 配置
@@ -33,11 +33,12 @@ slice-brush/
 
 ## 开发协议
 
-1. **改 `index.html` 之前**：在浏览器里打开当前版本，确认基线行为。
-2. **改完之后**：双击打开 `index.html` 跑一遍：加载图 → 切线 → 直线拖 → 曲线拖 → 粗细调 → 撤销 → 导出。
-3. **关键算法变动**（`drawStretchedShape` / `drawCurvedStretch` / `prepareSlicedImage`）：写改动前在 BUGS.md 或 progress.md 留一笔"为什么这样改"。
-4. **commit message**：以 `feat:` / `fix:` / `docs:` 起头；功能影响线上行为时加 `breaking:` 前缀。
-5. **push 即部署**：`git push` 后 1~2 分钟 GitHub Pages 自动重建，无需 CI。
+1. **动手之前先看 [BUGS.md](BUGS.md) 的“已知问题”一节**——15 条未修缺陷（A1~A15）都带行号，别把已经在册的问题当成新发现，也别在改动里顺手把它们踩深。
+2. **改 `index.html` 之前**：在浏览器里打开当前版本，确认基线行为。
+3. **改完之后**：双击打开 `index.html` 跑一遍：加载图 → 切线 → 直线拖 → 曲线拖 → 粗细调 → 撤销 → 导出。
+4. **关键算法变动**（`drawStretchedShape` / `drawCurvedStretch` / `prepareSlicedImage`）：写改动前在 BUGS.md 或 progress.md 留一笔“为什么这样改”。
+5. **commit message**：以 `feat:` / `fix:` / `docs:` 起头；功能影响线上行为时加 `breaking:` 前缀。
+6. **push 即部署**：`git push` 后 1~2 分钟 GitHub Pages 自动重建，无需 CI。
 
 ## 核心算法（改之前必读）
 
@@ -63,7 +64,7 @@ slice-brush/
 - 起点/终点用 `sliced.canvas` 完整下/上半截 stamp（带 OVERLAP 0.75 与中段 stamp 重叠）。
 - `taper = true` 时不画终点 stamp；当累计弧长达 75% 后 stamp 宽度按 smoothstep 衰减到 0 → 自然笔锋。
 - **历史教训**：v0.2 矩形 stamp + 平分角补丁有 alpha 叠加缝；v0.3 改 affine quad 解决 alpha 但暴露 clip 栅格化缝；v0.4 加 OVERLAP 扩 dest 边界没用——clip path 本身是 1-bit；v0.5 干脆抛弃 clip，回到 stamp brush 但用密集 stamp 密铺。
-- `drawAffineTri` 函数已不再被曲线渲染使用，保留作工具（未来可能用）。
+- ⚠️ `drawAffineTri`（index.html:746-777）**全文件零调用点**，是 v0.3 / v0.4 的遗物。它示范的正是被判定为错误的 `ctx.clip()` 方案——**不要把它当可用范式抄进新代码**。
 
 ### 多源图笔刷库
 
@@ -74,8 +75,8 @@ slice-brush/
 ### 笔触属性（每笔独立记录）
 
 - scale / alpha / feather / hue / taper。
-- 无 filter 直接画到 ctx；有 filter（feather>0 / hue≠0 / alpha<1）先画到 `offscreenCanvas` 再一次性 filter 复制 → **避免每个 affine 三角形都触发 GPU filter**。
-- 撤销/重做共用 `state.redoStack`；新笔画落定清空。
+- 无 filter 直接画到 ctx；有 filter（feather>0 / hue≠0 / alpha<1）先画到 `offscreenCanvas` 再一次性 filter 复制 → **避免成千上万个 stamp 每一个都触发 GPU filter**。
+- 撤销/重做共用 `state.redoStack`；**鼠标一按下就清空**（`mousedown` 里，不是笔画落定时）。
 
 ### 自动持久化
 
@@ -83,6 +84,7 @@ slice-brush/
 - 保存：brushes（图片 dataURL + 切线点）、strokes、活跃 brush、画布尺寸、背景设置。
 - 在 brush 增删 / 切线定义 / 笔画完成 / undo/redo / clear / 背景或尺寸改变时调 `persist()`。
 - 启动调 `tryRestore()` 异步还原（用 dataURL 重建 Image）。`restoring` flag 防止 restore 过程中触发 persist 循环。
+- ⚠️ **这一层是纸糊的**：源图整张进 localStorage，几张大图就顶满 5 MB 配额，而写入失败被空 catch 吞掉（A1）；`tryRestore()` 没有 catch，一张坏图就中断整个恢复（A2）。**动持久化相关代码前先把这两条修了**，别在流沙上加功能。
 
 ### 画布 & 背景
 
@@ -91,11 +93,11 @@ slice-brush/
 
 ## 不要做的事
 
-- ❌ 拆分单文件为多文件（拆了就破坏「双击即玩」属性）
+- ❌ 拆分单文件为多文件（拆了就破坏“双击即玩”属性）
 - ❌ 加构建工具 / 包管理（npm/webpack/vite 等）——这是个静态 demo
-- ❌ 加后端（任何 fetch/服务器调用都违反"零依赖"承诺）
+- ❌ 加后端（任何 fetch / 服务器调用都违反“零依赖”承诺；截至 2026-08-22，`index.html` 全文确实没有任何 `fetch` / `XMLHttpRequest` / 外链资源）
 - ❌ 改公开 URL 路径（`/slice-stretch-brush/` 已经在朋友圈传播）
-- ❌ 在 main 之外建分支搞 "feature branch flow"——单人项目直接 commit 到 main
+- ❌ 在 main 之外开分支——单人项目直接 commit 到 main
 
 ## 部署 / 一键发布
 
@@ -108,4 +110,4 @@ git push          # 1~2 分钟后 https://appapp777.github.io/slice-stretch-brus
 
 ## 路演叙事（如果别人问起）
 
-"美团黑客松摸鱼时画了张草图：苹果横切一刀，上半截拖着走会拉成胶囊。觉得好玩，半天写了个 HTML demo——可以加载任意 PNG，任意角度切一刀，沿鼠标轨迹弯曲当笔刷用——就能拿苹果写字了。"
+“美团黑客松摸鱼时画了张草图：苹果横切一刀，上半截拖着走会拉成胶囊。觉得好玩，半天写了个 HTML demo——可以加载任意 PNG，任意角度切一刀，沿鼠标轨迹弯曲当笔刷用——就能拿苹果写字了。”
