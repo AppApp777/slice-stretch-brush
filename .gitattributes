@@ -1,0 +1,6 @@
+# 换行统一 LF（2026-09-07）。Mac 全局 git 曾开着 core.autocrlf=true，checkout 会把 LF 写成 CRLF，
+# 带 shebang 的 .sh 立刻 bad interpreter；这份属性文件比全局配置可靠：配置再被改回去，checkout 仍写 LF。
+# ⛔ 别跑 git add --renormalize：会把历史上带 CRLF 提交进库的文件整份翻成改动。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
