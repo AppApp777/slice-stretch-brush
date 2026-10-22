@@ -1231,8 +1231,10 @@ function persist() {
       canvasH: mainCanvas.height,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    return true;
   } catch (e) {
-    // 配额超限就放弃存
+    setStatus('warn', '自动保存失败，请先导出当前画面，避免刷新后丢失新改动。');
+    return false;
   }
 }
 
@@ -1256,11 +1258,18 @@ async function tryRestore() {
 
   restoring = true;
   try {
-    // 还原 brushes
+    // 单张损坏不阻止其他笔刷恢复；恢复阶段不写回存档。
+    let failed = 0;
     for (const b of data.brushes) {
-      const img = await loadImageFromDataURL(b.srcData);
+      let img;
+      try { img = await loadImageFromDataURL(b.srcData); } catch (_) { failed++; continue; }
       const brush = { id: b.id, name: b.name, src: img, sliced: null, cutPoints: b.cutPoints || [] };
       state.brushes.push(brush);
+    }
+
+    if (!state.brushes.length) {
+      setStatus('warn', '存档图片未能恢复，原存档已保留。');
+      return false;
     }
 
     // 画布尺寸先恢复
@@ -1291,7 +1300,7 @@ async function tryRestore() {
     }
 
     // 笔画
-    state.strokes = Array.isArray(data.strokes) ? data.strokes : [];
+    state.strokes = Array.isArray(data.strokes) ? data.strokes.filter(s => !s.brushId || state.brushes.some(b => b.id === s.brushId)) : [];
 
     // 切到 active brush
     const activeId = data.activeBrushId && state.brushes.find(x => x.id === data.activeBrushId)
@@ -1311,9 +1320,12 @@ async function tryRestore() {
     rebuildCommitted();
     paint();
     if (state.brushes.length > 0) {
-      setStatus('ok', '已恢复上次会话（' + state.brushes.length + ' 张图，' + state.strokes.length + ' 笔）');
+      setStatus(failed ? 'warn' : 'ok', '已恢复上次会话（' + state.brushes.length + ' 张图，' + state.strokes.length + ' 笔）' + (failed ? '；' + failed + ' 张图片损坏，相关笔画未恢复，原存档未改动。' : ''));
     }
     return true;
+  } catch (error) {
+    setStatus('warn', '恢复未完成，原存档已保留，请勿立即刷新。');
+    return false;
   } finally {
     restoring = false;
   }
